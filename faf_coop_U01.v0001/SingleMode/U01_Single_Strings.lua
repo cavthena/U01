@@ -243,3 +243,14 @@ ObComsDeath = {
     {text = '[HQ]: Sir, the Quantum Communication Relay has been destroyed! Our operation has been compromised! Prepare for immediate recall and debrief! EarthCom, out.', 
     vid = HQvid10, bank = UEFBank, cue = 'ObComsDeath', faction = 'UEF'},
 }
+
+--Cinematic Dialogue
+Cinema1 = {
+    {text = 'This is a cinematic. If you see this it worked!', 
+    vid = HQvid15, bank = UEFBank, cue = 'Cinema1', faction = 'UEF'},
+}
+
+Cinema2 = {
+    {text = 'This is a cinematic TWO. If you see this it worked twice!', 
+    vid = HQvid15, bank = UEFBank, cue = 'Cinema2', faction = 'UEF'},
+}

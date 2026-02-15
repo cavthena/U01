@@ -13,6 +13,9 @@ local MODEHARD = import('/maps/faf_coop_U01.v0001/SingleMode/U01_SingleHard.lua'
 local ScenarioUtils = import('/lua/sim/ScenarioUtilities.lua')
 local Utilities = import('/lua/utilities.lua')
 local ScenarioFramework = import('/lua/ScenarioFramework.lua')
+local ExtraFunc = import('/maps/faf_coop_U01.v0001/faf_coop_U01_ExtraFunc.lua')
+local Cinematics = import('/lua/cinematics.lua')
+local OpStrings = import('/maps/faf_coop_U01.v0001/SingleMode/U01_Single_Strings.lua')
 
 local AIBuffs = import('/maps/faf_coop_U01.v0001/Ruan_AIBuff.lua')
 
@@ -29,7 +32,7 @@ local DbgSpeed = true
 local NoComs = false
 local SkipNIS = false
 
-local NIS1InitialDelay = 3
+local NIS1InitialDelay = 0
 
 --------------------------------------------------
 --Main Thread: Timetable--------------------------
@@ -127,6 +130,53 @@ function OnStart(scenario)
         'ResourceAllocation',
         'Teleporter'
     })
+
+    if not SkipNIS then
+        ScenarioFramework.CreateTimerTrigger(OpenCinematic, NIS1InitialDelay)
+    else
+        if ScenarioInfo.Coop then
+            --COOPMODE.CoopModeCatch(Debug, NoComs, SkipNIS)
+        else
+            if Difficulty == 1 then
+                MODEEASY.EasyModeCatch(Debug, NoComs, SkipNIS)
+            elseif Difficulty == 2 then
+                MODEMED.MediumModeCatch(Debug, NoComs, SkipNIS)
+            else
+                MODEHARD.HardModeCatch(Debug, NoComs, SkipNIS)
+            end
+        end
+    end
+end
+
+function OpenCinematic()
+    local intelMarker = {}
+
+    Cinematics.EnterNISMode()
+    Cinematics.CameraSetZoom(0, 0)
+
+    local function ValleyPan()
+        Cinematics.CameraSetZoom(144, 0)
+        Cinematics.CameraMoveToMarker('CS_01', 0)
+
+        if ScenarioInfo.Coop then
+            intelMarker[1] = ScenarioFramework.CreateVisibleAreaLocation(48, 'Reveal_01', 0, ArmyBrains[ScenarioInfo.Player1])
+            intelMarker[2] = ScenarioFramework.CreateVisibleAreaLocation(48, 'Reveal_02', 0, ArmyBrains[ScenarioInfo.Player1])
+            intelMarker[3] = ScenarioFramework.CreateVisibleAreaLocation(48, 'Reveal_01', 0, ArmyBrains[ScenarioInfo.Player2])
+            intelMarker[4] = ScenarioFramework.CreateVisibleAreaLocation(48, 'Reveal_02', 0, ArmyBrains[ScenarioInfo.Player2])
+        else
+            intelMarker[1] = ScenarioFramework.CreateVisibleAreaLocation(48, 'Reveal_01', 0, ArmyBrains[ScenarioInfo.Player1])
+            intelMarker[2] = ScenarioFramework.CreateVisibleAreaLocation(48, 'Reveal_02', 0, ArmyBrains[ScenarioInfo.Player1])
+        end
+
+        ScenarioFramework.Dialogue(OpStrings.Cinema2, MissionHandOff, true, nil)
+        Cinematics.CameraMoveToMarker('CS_02', 15)
+    end
+
+    ScenarioFramework.Dialogue(OpStrings.Cinema1, ValleyPan, true, nil)
+end
+
+function MissionHandOff()
+    Cinematics.ExitNISMode()
 
     if ScenarioInfo.Coop then
         --COOPMODE.CoopModeCatch(Debug, NoComs, SkipNIS)

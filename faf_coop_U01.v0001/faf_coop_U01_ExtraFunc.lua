@@ -4,6 +4,7 @@
 
 local ScenarioUtils = import('/lua/sim/ScenarioUtilities.lua')
 local ScenarioFramework = import('/lua/ScenarioFramework.lua')
+local Cinematics = import('/lua/cinematics.lua')
 
 local OpStrings = import('/maps/faf_coop_U01.v0001/SingleMode/U01_Single_Strings.lua')
 
@@ -157,3 +158,7 @@ function OperationComplete()
         ScenarioFramework.EndOperation(true, true, true)
     end)
 end
+
+---------------------------------------------------
+--Cinematic Functions------------------------------
+---------------------------------------------------
