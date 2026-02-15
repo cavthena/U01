@@ -245,12 +245,12 @@ ObComsDeath = {
 }
 
 --Cinematic Dialogue
-Cinema1 = {
+Brief1 = {
     {text = 'This is a cinematic. If you see this it worked!', 
-    vid = HQvid15, bank = UEFBank, cue = 'Cinema1', faction = 'UEF'},
+    vid = HQvid15, bank = UEFBank, cue = 'Brief1', faction = 'UEF'},
 }
 
-Cinema2 = {
+Brief2 = {
     {text = 'This is a cinematic TWO. If you see this it worked twice!', 
-    vid = HQvid15, bank = UEFBank, cue = 'Cinema2', faction = 'UEF'},
+    vid = HQvid15, bank = UEFBank, cue = 'Brief2', faction = 'UEF'},
 }

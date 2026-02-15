@@ -32,7 +32,7 @@ local DbgSpeed = true
 local NoComs = false
 local SkipNIS = false
 
-local NIS1InitialDelay = 0
+local NIS1InitialDelay = 3
 
 --------------------------------------------------
 --Main Thread: Timetable--------------------------
@@ -131,9 +131,9 @@ function OnStart(scenario)
         'Teleporter'
     })
 
-    if not SkipNIS then
-        ScenarioFramework.CreateTimerTrigger(OpenCinematic, NIS1InitialDelay)
-    else
+    --if not SkipNIS then
+        --ScenarioFramework.CreateTimerTrigger(OpenCinematic, NIS1InitialDelay)
+    --else
         if ScenarioInfo.Coop then
             --COOPMODE.CoopModeCatch(Debug, NoComs, SkipNIS)
         else
@@ -145,7 +145,7 @@ function OnStart(scenario)
                 MODEHARD.HardModeCatch(Debug, NoComs, SkipNIS)
             end
         end
-    end
+    --end
 end
 
 function OpenCinematic()
@@ -168,11 +168,11 @@ function OpenCinematic()
             intelMarker[2] = ScenarioFramework.CreateVisibleAreaLocation(48, 'Reveal_02', 0, ArmyBrains[ScenarioInfo.Player1])
         end
 
-        ScenarioFramework.Dialogue(OpStrings.Cinema2, MissionHandOff, true, nil)
+        ScenarioFramework.Dialogue(OpStrings.Brief2, MissionHandOff, true, nil)
         Cinematics.CameraMoveToMarker('CS_02', 15)
     end
 
-    ScenarioFramework.Dialogue(OpStrings.Cinema1, ValleyPan, true, nil)
+    ScenarioFramework.Dialogue(OpStrings.Brief1, ValleyPan, true, nil)
 end
 
 function MissionHandOff()
