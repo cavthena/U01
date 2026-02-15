@@ -32,6 +32,8 @@ Usage
         attackFn         = function(platoon) end,     -- optional; may also be a global function name
         attackData       = {},                        -- optional table copied to platoon.PlatoonData
         builderTag       = 'Forward_UB',              -- optional unique tag (defaults to auto-generated)
+        masterPlatoon    = nil,                       -- optional explicit master platoon (defaults to base:GetMasterPlatoon())
+        useMasterPlatoon = true,                      -- optional toggle (default true)
         mode             = 1,                         -- optional: 1=waves, 2=loss-gated, 3=sustain
         mode2LossThreshold = 0.5,                     -- optional [0..1] loss fraction before next wave in mode 2
         escalationPercent = 0,                       -- optional percent increase applied cumulatively per escalationFrequency
@@ -142,6 +144,8 @@ local function normalizeParams(p)
         radius           = p.radius,
         baseTag          = p.baseTag,
         baseHandle       = p.baseHandle,
+        masterPlatoon    = p.masterPlatoon,
+        useMasterPlatoon = (p.useMasterPlatoon ~= nil) and p.useMasterPlatoon or true,
         debug            = p.debug and true or false,
         mode             = p.mode or 1,
         mode2LossThreshold = (p.mode2LossThreshold ~= nil) and p.mode2LossThreshold or 0.5,
@@ -257,16 +261,33 @@ local function flattenCounts(composition, difficulty)
     return wanted, order
 end
 
-local function escalationFactor(params, waveNo)
-    local pct   = math.max(0, params and params.escalationPercent or 0)
+local function normalizeEscalationPercent(raw)
+    local pct = tonumber(raw) or 0
+    if pct <= 0 then
+        return 0
+    end
+    if pct > 1 then
+        pct = pct / 100
+    end
+    return pct
+end
+
+local function getEscalationInfo(params, waveNo)
+    local inc   = normalizeEscalationPercent(params and params.escalationPercent)
     local every = math.floor(params and params.escalationFrequency or 0)
-    if pct <= 0 or every <= 0 then return 1 end
+    if inc <= 0 or every <= 0 then
+        return 1, 0
+    end
 
     local wave = math.max(1, waveNo or 1)
     local steps = math.floor((wave - 1) / every)
-    if steps <= 0 then return 1 end
+    local factor = 1 + (inc * steps)
+    return factor, steps
+end
 
-    return (1 + pct / 100) ^ steps
+local function escalationFactor(params, waveNo)
+    local factor = getEscalationInfo(params, waveNo)
+    return factor
 end
 
 local function scaledWanted(baseWanted, factor)
@@ -274,7 +295,13 @@ local function scaledWanted(baseWanted, factor)
     for bp, cnt in pairs(baseWanted or {}) do
         local use = cnt or 0
         if factor ~= 1 then
-            use = math.max(0, math.floor(use * factor))
+            local scaled = math.max(0, math.floor((use * factor) + 1e-6))
+            if factor >= 1 and scaled < use then
+                scaled = use
+            elseif factor > 1 and use > 0 and scaled == use then
+                scaled = use + 1
+            end
+            use = scaled
         end
         out[bp] = use
     end
@@ -302,7 +329,7 @@ local function setFactoryRally(factory, pos)
 end
 
 -- Clear queues on a list of factories and immediately restore this builder's rally
-local function _ClearQueuesRestoreRally(self)
+local function _ClearQueuesRestoreRally(self, stopBuild)
     if not self then return end
     local flist = {}
     for _, f in pairs(self.leased or {}) do
@@ -311,6 +338,9 @@ local function _ClearQueuesRestoreRally(self)
     if table.getn(flist) == 0 then return end
     local rpos = getRallyPos(self.params) or self.basePos
     IssueClearFactoryCommands(flist)
+    if stopBuild then
+        IssueStop(flist)
+    end
     if rpos then
         for _, f in ipairs(flist) do
             setFactoryRally(f, rpos)
@@ -326,6 +356,21 @@ local function unitBpId(u)
     return short
 end
 
+local function formatUnitList(units)
+    local items = {}
+    for _, u in ipairs(units or {}) do
+        if u and not u.Dead then
+            local id = u:GetEntityId()
+            local bp = unitBpId(u) or 'unknown'
+            table.insert(items, string.format('%d:%s', id, bp))
+        end
+    end
+    if table.getn(items) == 0 then
+        return 'none'
+    end
+    return table.concat(items, ', ')
+end
+
 local function dist2d(a, b)
     if not a or not b then return 999999 end
     local dx = (a[1] or 0) - (b[1] or 0)
@@ -339,6 +384,17 @@ local function isComplete(u)
     if u.GetFractionComplete and u:GetFractionComplete() < 1 then return false end
     if u.IsUnitState and u:IsUnitState('BeingBuilt') then return false end
     return true
+end
+
+local function _WasHandedOff(u, tag)
+    if not (u and u._ub_handoff) then return false end
+    return u._ub_handoff[tag] == true
+end
+
+local function _MarkHandedOff(u, tag)
+    if not u then return end
+    u._ub_handoff = u._ub_handoff or {}
+    u._ub_handoff[tag] = true
 end
 
 -- Sweep nearby units that belong to this builder (or are candidates for it) to the rally.
@@ -482,9 +538,6 @@ function Builder:Dbg(msg) if self.params.debug then self:Log(msg) end end
 -- Gate building when an external controller (e.g., BaseEngineer) says we're full
 function Builder:SetHoldBuild(flag)
     self.holdBuild = flag and true or false
-    if self.params.debug then
-        self:Dbg('HoldBuild=' .. tostring(self.holdBuild))
-    end
 end
 
 -- Register a platoon callback at any time (function or global name, optional event)
@@ -501,11 +554,7 @@ function Builder:EnsureFactoryQuota()
     local have = table.getn(_LiveFactoriesList(self, false))
     if have < want then
         if not self.leaseId then
-            self:Dbg(('EnsureFactoryQuota: have=%d want=%d -> requesting lease'):format(have, want))
             self:RequestLease()
-        else
-            self:Dbg(('EnsureFactoryQuota: have=%d want=%d but lease %d already active; waiting for allocator rebalance')
-                :format(have, want, self.leaseId))
         end
     end
 end
@@ -533,18 +582,95 @@ function Builder:_AllFactoriesIdle()
     return any and allIdle
 end
 
-function Builder:_HandOffPlatoon(units, label)
-    local platoon = self.brain:MakePlatoon(label or (self.tag .. '_Attack'), '')
-    local assign = {}
+function Builder:_WaitingForFactories()
+    local want = math.max(0, (self.params and self.params.wantFactories) or 0)
+    if want <= 0 then
+        return false
+    end
+    local have = table.getn(_LiveFactoriesList(self, false))
+    return have < want
+end
+
+function Builder:_WaitForLeaseGrant(maxWait, interval)
+    local waited = 0
+    local step = interval or 0.5
+    while not self.stopped do
+        if table.getn(_LiveFactoriesList(self, false)) > 0 then
+            return true
+        end
+        if maxWait and waited >= maxWait then
+            return false
+        end
+        WaitSeconds(step)
+        waited = waited + step
+    end
+    return false
+end
+
+function Builder:_WaitForLeaseGrant(maxWait, interval)
+    local waited = 0
+    local step = interval or 0.5
+    while not self.stopped do
+        if table.getn(_LiveFactoriesList(self, false)) > 0 then
+            return true
+        end
+        if maxWait and waited >= maxWait then
+            return false
+        end
+        WaitSeconds(step)
+        waited = waited + step
+    end
+    return false
+end
+
+function Builder:_CollectHandoffUnits(units)
+    local assign, seen = {}, {}
+    self.handedOff = self.handedOff or {}
+
+    local function add(u)
+        if not (u and not u.Dead and isComplete(u) and u:GetAIBrain() == self.brain) then
+            return
+        end
+        if u.ub_tag ~= self.tag then
+            return
+        end
+        local id = u:GetEntityId()
+        if self.handedOff[id] or _WasHandedOff(u, self.tag) or seen[id] then
+            return
+        end
+        seen[id] = true
+        table.insert(assign, u)
+    end
+
     for _, u in ipairs(units or {}) do
-        if u and not u.Dead then
-            table.insert(assign, u)
+        add(u)
+    end
+
+    if self.brain and self.brain.GetListOfUnits then
+        for _, u in ipairs(self.brain:GetListOfUnits(categories.MOBILE, false) or {}) do
+            add(u)
         end
     end
+
+    return assign
+end
+
+function Builder:_HandOffPlatoon(units, label)
+    local platoon = self.brain:MakePlatoon(label or (self.tag .. '_Attack'), '')
+    local assign = self:_CollectHandoffUnits(units)
 
     if table.getn(assign) > 0 then
         IssueClearCommands(assign)
         self.brain:AssignUnitsToPlatoon(platoon, assign, 'Attack', 'GrowthFormation')
+    end
+    self:Dbg(('Handoff: platoon=%s units=%s')
+        :format((platoon.GetPlatoonLabel and platoon:GetPlatoonLabel()) or (label or 'unknown'),
+                formatUnitList(platoon:GetPlatoonUnits() or {})))
+
+    for _, u in ipairs(assign) do
+        local id = u:GetEntityId()
+        self.handedOff[id] = true
+        _MarkHandedOff(u, self.tag)
     end
 
     if self.params.attackFn then
@@ -558,9 +684,46 @@ function Builder:_HandOffPlatoon(units, label)
     return platoon
 end
 
+function Builder:_CleanupAfterHandoff()
+    -- Clear per-request state so the next wave starts cleanly.
+    self.handedOff = {}
+    self.stagingSet = {}
+    self.stagingPlatoon = nil
+    self.stagingName = nil
+    self.attackName = nil
+    self.inProd = {}
+    self.rrIndex = 1
+    self._haveSum = 0
+    self._idleAllCounter = 0
+end
+
+function Builder:_ReleaseLease()
+    local leaseId = self.leaseId
+    self.leaseId = nil
+    self.leased = {}
+    self.inProd = {}
+    if leaseId then
+        self.base:ReturnLease(leaseId)
+    end
+end
+
 function Builder:EarlyHandoff(aliveList)
-    local flist = _LiveFactoriesList(self, false)
-    _ClearQueuesRestoreRally(self)
+    _ClearQueuesRestoreRally(self, true)
+
+    -- Allow master platoon sweeps to settle before we assemble a handoff.
+    WaitSeconds(2)
+    local haveTbl = countCompleteByBp(aliveList or {}, self.tag)
+    if self.stagingPlatoon then
+        self:_CollectFromMaster(self.stagingPlatoon, haveTbl)
+    end
+    if self.stagingSet then
+        aliveList = {}
+        for _, u in pairs(self.stagingSet) do
+            if isComplete(u) and u.ub_tag == self.tag then
+                table.insert(aliveList, u)
+            end
+        end
+    end
 
     -- Always create a fresh attack platoon and only add units with our tag
     local assign = {}
@@ -571,29 +734,30 @@ function Builder:EarlyHandoff(aliveList)
     end
 
     local attackPlatoon = self:_HandOffPlatoon(assign, self.attackName or (self.tag..'_Attack'))
+    self:_CleanupAfterHandoff()
     if not attackPlatoon then
         self:Warn('EarlyHandoff: no platoon created for handoff')
     end
 
     if self.leaseId then
-        self.base:ReturnLease(self.leaseId)
-        self.leaseId = nil
-        self:Dbg('EarlyHandoff: returned factory lease')
+        self:_ReleaseLease()
     end
+    self._cleanupDue = true
+    self:RunCleanup()
 
     local mode = self.params.mode or 1
     if mode == 3 then
-        self:Dbg('EarlyHandoff -> Mode3 sustain loop')
         self:Mode3Loop(attackPlatoon)
         return
     elseif mode == 2 then
         self:WaitForMode2Gate(attackPlatoon)
     end
 
-    WaitSeconds(math.max(0, self.params.waveCooldown or 0))
+        WaitSeconds(math.max(0, self.params.waveCooldown or 0))
     self:RunCleanup()
 
     if not self.stopped then
+        self:_EndWaveThreads()
         self:BeginWaveLoop()
     end
 end
@@ -682,10 +846,6 @@ function Builder:SanitizeInProd(haveTbl)
         local pipeline   = math.max(queuedQ + queuedUC, remembered)
         local needed = math.max(0, (want or 0) - have)
         local use    = math.min(pipeline, needed)
-        if (self.inProd[bp] or -1) ~= use then
-            self:Dbg(('SanitizeInProd: bp=%s realQ=%d under=%d have=%d want=%d -> inProd=%d')
-                :format(bp, queuedQ, queuedUC, have, want or 0, use))
-        end
         self.inProd[bp] = use
     end
 end
@@ -699,6 +859,7 @@ function Builder:_MakeLeaseParams()
         domain         = (self.params.domain or 'AUTO'):upper(),
         wantFactories  = math.max(0, self.params.wantFactories or 0),
         priority       = math.max(0, math.min(200, self.params.priority or 50)),
+        requesterTag   = self.tag,
         onGrant        = function(f, id) self:OnLeaseGranted(f, id) end,
         onUpdate       = function(f, id) self:OnLeaseUpdated(f, id) end,
         onRevoke       = function(list, id, reason) self:OnLeaseRevoked(list, id, reason) end,
@@ -707,12 +868,32 @@ function Builder:_MakeLeaseParams()
 end
 
 function Builder:RequestLease()
+    if self.leaseId then
+        return self.leaseId
+    end
     self.leaseId = self.base:RequestFactories(self:_MakeLeaseParams())
     return self.leaseId
 end
 
 function Builder:GetEscalationFactor(waveNo)
     return escalationFactor(self.params, waveNo)
+end
+
+function Builder:DebugEscalation()
+    if not (self.params and self.params.debug) or self._debugEscalationDone then
+        return
+    end
+    self._debugEscalationDone = true
+
+    for wave = 1, 16 do
+        local factor, steps = getEscalationInfo(self.params, wave)
+        local total = 0
+        local wanted = scaledWanted(self.baseWanted or {}, factor)
+        for _, cnt in pairs(wanted) do
+            total = total + (cnt or 0)
+        end
+        self:Log(string.format('EscalationDebug wave=%d steps=%d factor=%.2f totalWanted=%d', wave, steps, factor, total))
+    end
 end
 
 function Builder:GetWantedForWave(waveNo)
@@ -737,6 +918,10 @@ function Builder:Start()
             end)
         else
             self.brain:ForkThread(function()
+                if (self.params.mode or 1) == 2 then
+                    self:WaitForMode2Gate(p)
+                end
+                if self.stopped then return end
                 WaitSeconds(math.max(0, self.params.waveCooldown or 0))
                 self:RunCleanup()
                 if not self.stopped then
@@ -768,7 +953,7 @@ function Builder:BeginWaveLoop()
     -- Request factories
     self:RequestLease()
     if not self.leaseId then
-        self:Warn('Factory lease request failed; will retry in 15s')
+        self:Warn('Factory lease request failed; will retry shortly')
         self.brain:ForkThread(function()
             WaitSeconds(15)
             if not self.stopped then self:BeginWaveLoop() end
@@ -783,6 +968,23 @@ function Builder:BeginWaveLoop()
     self.rallyKeeperThread = self.brain:ForkThread(function() self:RallyKeeperLoop() end)
 end
 
+function Builder:_EndWaveThreads()
+    if self.collectThread then
+        KillThread(self.collectThread)
+        self.collectThread = nil
+    end
+    if self.monitorThread then
+        KillThread(self.monitorThread)
+        self.monitorThread = nil
+    end
+    if self.rallyKeeperThread then
+        KillThread(self.rallyKeeperThread)
+        self.rallyKeeperThread = nil
+    end
+    self.stagingPlatoon = nil
+    self.stagingSet = {}
+end
+
 function Builder:OnLeaseGranted(factories, leaseId)
     if self.stopped then return end
     self.leased = {}
@@ -791,8 +993,6 @@ function Builder:OnLeaseGranted(factories, leaseId)
         self.leased[f:GetEntityId()] = f
         IssueClearFactoryCommands({f})
         setFactoryRally(f, rpos)
-        self:Dbg(('%s: leased factory %d, rally->(%.1f,%.1f,%.1f)')
-            :format(self.params.domain or 'AUTO', f:GetEntityId(), rpos and rpos[1] or -1, rpos and rpos[2] or -1, rpos and rpos[3] or -1))
     end
     -- Fail-safe: make sure anything already on the ground heads to rally
     _RallySweep(self)
@@ -810,8 +1010,6 @@ function Builder:OnLeaseUpdated(factories, leaseId)
             self.leased[f:GetEntityId()] = f
             IssueClearFactoryCommands({f})
             setFactoryRally(f, rpos)
-            self:Dbg(('%s: leased factory %d, rally->(%.1f,%.1f,%.1f)')
-                :format(self.params.domain or 'AUTO', f:GetEntityId(), rpos and rpos[1] or -1, rpos and rpos[2] or -1, rpos and rpos[3] or -1))
         end
     end
     -- Fail-safe on updates too
@@ -846,14 +1044,12 @@ function Builder:OnLeaseRevoked(list, leaseId, reason)
     end
     if not hasAny then
         self.leaseId = nil
-        self:Dbg('LeaseRevoked: no factories remain; leaseId cleared')
         if stall and not self.stopped then
             local brain = self.brain
             if brain and brain.ForkThread then
                 brain:ForkThread(function()
                     WaitSeconds(1)
                     if not self.stopped and not self.leaseId then
-                        self:Dbg('LeaseRevoked: requesting new lease after stall')
                         self:RequestLease()
                     end
                 end)
@@ -878,12 +1074,13 @@ function Builder:SpawnDirectAndSend(waveNo)
             end
         end
     end
-    return self:_HandOffPlatoon(spawned, string.format('%s_Attack_%d', self.tag, waveNo or 1))
+    local platoon = self:_HandOffPlatoon(spawned, string.format('%s_Attack_%d', self.tag, waveNo or 1))
+    self:_CleanupAfterHandoff()
+    return platoon
 end
 
 function Builder:CollectorLoop()
     -- Collect units produced by our leased factories, attach to staging platoon (for tracking only).
-    self:Dbg('CollectorLoop: start')
     while not self.stopped and self.stagingPlatoon do
         -- Gather nearby roll-offs (around leased factories and around rally)
         local nearby, facCount = {}, 0
@@ -900,7 +1097,6 @@ function Builder:CollectorLoop()
             local aroundRally = self.brain:GetUnitsAroundPoint(categories.MOBILE, first, 18, 'Ally') or {}
             for _, u in ipairs(aroundRally) do table.insert(nearby, u) end
         end
-        self:Dbg(('Collector: fac=%d nearFactories+rally=%d'):format(facCount, table.getn(nearby)))
 
         -- how many we already staged (by BP)
         local aliveTbl = {}
@@ -925,20 +1121,20 @@ function Builder:CollectorLoop()
                     local q = self.inProd[bp] or 0
                     if q > 0 then self.inProd[bp] = q - 1 end
                     aliveTbl[bp] = have + 1
-                    self:Dbg(('Collector: +unit id=%d bp=%s (need->%d/%d)'):format(id, bp, aliveTbl[bp], want))
                 end
             end
         end
-        local __sleep = (facCount == 0) and 15 or 1
-        if facCount == 0 then self:Dbg('Collector: no live factories; sleeping 15s') end
-        WaitSeconds(__sleep)
+        if facCount == 0 then
+            self:_WaitForLeaseGrant(3, 0.5)
+            WaitSeconds(0.5)
+        else
+            WaitSeconds(1)
+        end
     end
-    self:Dbg('CollectorLoop: end')
 end
 
 function Builder:MonitorLoop()
     -- Wait until FULL (all requested units are BUILT), then hand off immediately.
-    self:Dbg('MonitorLoop: start')
     local attackPlatoon = nil
     while not self.stopped do
         if not self.stagingPlatoon then break end
@@ -952,7 +1148,6 @@ function Builder:MonitorLoop()
         local full      = cmpCounts(self.wanted, haveTbl)
         local wantTotal = sumCounts(self.wanted)
         local haveTotal = sumCounts(haveTbl)
-        self:Dbg(('Monitor: alive=%d (%d/%d) full=%s'):format(table.getn(aliveList), haveTotal, wantTotal, tostring(full)))
 
         if not full then
             -- NEW: keep nudging allocator to reach our target factory count
@@ -974,7 +1169,7 @@ function Builder:MonitorLoop()
                 self._haveSum = haveTotal
                 self._idleAllCounter = 0
             else
-                if allIdle then
+                if allIdle and not self:_WaitingForFactories() then
                     self._idleAllCounter = (self._idleAllCounter or 0) + 1
                     -- Early handoff after 10 consecutive idle seconds
                     if self._idleAllCounter >= 10 then
@@ -991,76 +1186,30 @@ function Builder:MonitorLoop()
 
             WaitSeconds(1)
         else
-            -- Before handoff, require ALL expected units are assembled at the rally point
-            local rpos    = getRallyPos(self.params) or self.basePos
-            local radius  = 18
-            local timeout = 30
-            local waited  = 0
-            local ready   = false
-
-            while not self.stopped do
-                -- recompute completed units from tracking set (not relying on platoon handle)
-                aliveList = {}
-                for id, u in pairs(self.stagingSet) do
-                    if isComplete(u) and u.ub_tag == self.tag then
-                        table.insert(aliveList, u)
-                    end
-                end
-                haveTbl = countCompleteByBp(aliveList, self.tag)
-
-                -- if composition regressed (death), reconcile deficit (no reset)
-                if not cmpCounts(self.wanted, haveTbl) then
-                    self:Dbg('HandoffWait: composition dropped below wanted; reconciling deficit (no reset)')
-                    self:SanitizeInProd(haveTbl)
-                    self:QueueNeededBuilds(haveTbl)
-                end
-
-                -- count completed units at rally
-                local at = 0
-                for _, u in ipairs(aliveList) do
-                    local pos = u:GetPosition()
-                    if dist2d(pos, rpos) <= radius then
-                        at = at + 1
-                    end
-                end
-                self:Dbg(('HandoffWait: complete-at-rally=%d/%d (radius=%.1f) waited=%.1fs')
-                    :format(at, wantTotal, radius, waited))
-
-                if at >= wantTotal then
-                    WaitTicks(10)
-                    local haveFinal
-                    if self.stagingPlatoon and self.brain:PlatoonExists(self.stagingPlatoon) then
-                        haveFinal = countCompleteByBp(self.stagingPlatoon:GetPlatoonUnits() or {}, self.tag)
-                    else
-                        haveFinal = countCompleteByBp(aliveList or {}, self.tag)
-                    end
-
-                    local deficitTbl = computeDeficit(self.wanted, haveFinal)
-                    local missing = deficitTotal(deficitTbl)
-
-                    if missing == 0 then
-                        ready = true
-                        break
-                    end
-
-                    self:Warn(('FinalCheck: deficit %d before handoff -> queue replacements and keep waiting'):format(missing))
-                    self:SanitizeInProd(haveFinal)
-                    self:QueueNeededBuilds(haveFinal)
-                end
-
-                WaitSeconds(0.5)
-                waited = waited + 0.5
-                if timeout > 0 and waited >= timeout then
-                    self:Warn(('HandoffWait: TIMEOUT after %.1fs (at %d/%d); proceeding anyway'):format(waited, at, wantTotal))
-                    ready = true
-                    break
+            -- =============== HANDOFF ===============
+            -- Immediately hand off once all units are complete; do not wait for rally assembly.
+            -- Rebuild aliveList from the current staging set to avoid stale references.
+            self:Dbg(('RequestComplete: have=%d want=%d wave=%s')
+                :format(haveTotal, wantTotal, tostring(self.wave or 1)))
+            -- Give the base a short buffer, then request composition units from the master platoon.
+            WaitSeconds(5)
+            if self.stagingPlatoon then
+                self:_CollectFromMaster(self.stagingPlatoon, haveTbl)
+            end
+            aliveList = {}
+            for id, u in pairs(self.stagingSet) do
+                if isComplete(u) and u.ub_tag == self.tag then
+                    table.insert(aliveList, u)
                 end
             end
+            haveTbl = countCompleteByBp(aliveList, self.tag)
 
-            if not ready then
+            -- If the composition regressed between checks, reconcile deficit before continuing.
+            if not cmpCounts(self.wanted, haveTbl) then
+                self:SanitizeInProd(haveTbl)
+                self:QueueNeededBuilds(haveTbl)
                 WaitSeconds(0.5)
             else
-                -- =============== HANDOFF ===============
                 _ClearQueuesRestoreRally(self)
 
                 -- Build the attack platoon strictly from our tagged aliveList
@@ -1072,21 +1221,14 @@ function Builder:MonitorLoop()
                 end
 
                 attackPlatoon = self:_HandOffPlatoon(assign, self.attackName)
-                local units = attackPlatoon and attackPlatoon:GetPlatoonUnits() or {}
-                self:Dbg(('Handoff: attackPlatoon label=%s units=%d exists=%s')
-                    :format((attackPlatoon and attackPlatoon.GetPlatoonLabel and attackPlatoon:GetPlatoonLabel()) or 'nil',
-                            table.getn(units),
-                            tostring(attackPlatoon and self.brain:PlatoonExists(attackPlatoon))))
+                self:_CleanupAfterHandoff()
 
                 if self.leaseId then
-                    self.base:ReturnLease(self.leaseId)
-                    self.leaseId = nil
-                    self:Dbg('Handoff: returned factory lease; entering post-handoff mode gate')
+                    self:_ReleaseLease()
                 end
 
                 local mode = self.params.mode or 1
                 if mode == 3 then
-                    self:Dbg('Mode3: entering sustain loop')
                     self:Mode3Loop(attackPlatoon)
                     return
                 elseif mode == 2 then
@@ -1096,18 +1238,17 @@ function Builder:MonitorLoop()
                 WaitSeconds(math.max(0, self.params.waveCooldown or 0))
                 self:RunCleanup()
                 if not self.stopped then
+                    self:_EndWaveThreads()
                     self:BeginWaveLoop()
                 end
                 return
             end
         end
     end
-    self:Dbg('MonitorLoop: end')
 end
 
 function Builder:QueueNeededBuilds(currentCounts)
     if self.holdBuild then
-        self:Dbg('QueueNeededBuilds: holdBuild=true; skipping queue')
         return
     end
 
@@ -1120,9 +1261,13 @@ function Builder:QueueNeededBuilds(currentCounts)
         if f and not f.Dead then table.insert(flist, f) end
     end
     if table.getn(flist) == 0 then
-        self:Warn('QueueNeededBuilds: no live factories — requesting lease; sleeping 15s before retry')
-        self:RequestLease()
-        WaitSeconds(15)
+        if not self.leaseId then
+            self:Warn('QueueNeededBuilds: no live factories — requesting lease; waiting for grant')
+            self:RequestLease()
+        else
+            self:Dbg('QueueNeededBuilds: no live factories; lease pending, waiting for grant')
+        end
+        self:_WaitForLeaseGrant(3, 0.5)
         return
     end
 
@@ -1151,7 +1296,6 @@ function Builder:QueueNeededBuilds(currentCounts)
     self:EnsureFactoryQuota()
 
     if fcount == 0 then
-        self:Dbg('QueueNeededBuilds: no usable factories (all assisting/paused/upgrading)')
         return
     end
 
@@ -1163,8 +1307,6 @@ function Builder:QueueNeededBuilds(currentCounts)
 
         if toQueue > 0 then
             any = true
-            self:Dbg(('QueueNeededBuilds: bp=%s have=%d queued=%d want=%d -> toQueue=%d')
-                :format(bp, have, queued, want, toQueue))
 
             -- Try to place orders across factories in round-robin
             local spinsWithoutLanding = 0
@@ -1192,13 +1334,9 @@ function Builder:QueueNeededBuilds(currentCounts)
 
                     if landed then
                         self.inProd[bp] = (self.inProd[bp] or 0) + 1
-                        self:Dbg(('Build: queued %s on factory %d (inProd=%d)')
-                            :format(bp, f:GetEntityId(), self.inProd[bp]))
                         toQueue = toQueue - 1
                         spinsWithoutLanding = 0
                     else
-                        self:Dbg(('Build: order for %s did not land on factory %d; trying next')
-                            :format(bp, f:GetEntityId()))
                         spinsWithoutLanding = spinsWithoutLanding + 1
                     end
                 else
@@ -1211,16 +1349,10 @@ function Builder:QueueNeededBuilds(currentCounts)
 
                 -- Safety: if we made a full pass without landing anything, bail out for now
                 if spinsWithoutLanding >= fcount then
-                    self:Dbg(('Build: no factories accepted orders for %s this pass; will retry later')
-                        :format(bp))
                     break
                 end
             end
         end
-    end
-
-    if not any then
-        self:Dbg('QueueNeededBuilds: satisfied (no new orders).')
     end
 end
 
@@ -1237,7 +1369,6 @@ function Builder:CleanupTimerLoop()
         WaitSeconds(300)  -- 5 minutes
         if self.stopped then break end
         self._cleanupDue = true
-        self:Dbg('CleanupTimer: cleanup due flag set')
     end
 end
 
@@ -1272,14 +1403,11 @@ function Builder:RunCleanup()
 
     local count = table.getn(idle)
     if count == 0 then
-        self:Dbg('Cleanup: no idle tagged units in base radius')
         return
     end
 
     self.cleanupWave = (self.cleanupWave or 0) + 1
     local label = string.format('%s_Cleanup_%d', self.tag, self.cleanupWave)
-    self:Dbg(('Cleanup: handed %d idle units to attackFn as platoon %s')
-        :format(count, label))
     self:_HandOffPlatoon(idle, label)
 end
 
@@ -1288,17 +1416,127 @@ function Builder:WaitForMode2Gate(p)
     local wantTotal = sumCounts(self.wanted)
     while not self.stopped do
         if not p or not self.brain:PlatoonExists(p) then
-            self:Dbg('Mode2Gate: previous platoon gone; gate passed')
             return
         end
         local alive = 0
         for _, u in ipairs(p:GetPlatoonUnits() or {}) do if isComplete(u) then alive = alive + 1 end end
         local lost = math.max(0, wantTotal - alive)
         local frac = (wantTotal > 0) and (lost / wantTotal) or 1
-        self:Dbg(('Mode2Gate: alive=%d lost=%d frac=%.2f thr=%.2f'):format(alive, lost, frac, thr))
         if frac >= thr then return end
         WaitSeconds(2)
     end
+end
+
+function Builder:_GetMasterPlatoon()
+    if self.params and self.params.useMasterPlatoon == false then
+        return nil
+    end
+    local mp = self.masterPlatoon
+    if mp and self.brain and self.brain.PlatoonExists and self.brain:PlatoonExists(mp) then
+        return mp
+    end
+    if self.base and self.base.GetMasterPlatoon then
+        mp = self.base:GetMasterPlatoon()
+        self.masterPlatoon = mp
+        return mp
+    end
+    return nil
+end
+
+function Builder:_CollectFromMaster(platoon, haveTbl)
+    local base = self.base
+    local taken = 0
+    local needList = {}
+    local needTbl = {}
+    local totalNeed = 0
+    for bp, want in pairs(self.wanted or {}) do
+        local have = haveTbl[bp] or 0
+        if have < want then
+            local need = want - have
+            totalNeed = totalNeed + need
+            needTbl[bp] = need
+            table.insert(needList, string.format('%s:%d', bp, need))
+        end
+    end
+    if totalNeed == 0 then return 0 end
+
+    if base and base.RequestMasterUnits then
+        self:Dbg(('CollectFromMaster: builder=%s requesting units (need=%s)')
+            :format(self.tag, table.concat(needList, ', ')))
+        local provided = base:RequestMasterUnits(needTbl, platoon, self.tag) or {}
+        for _, u in ipairs(provided) do
+            local bp = unitBpId(u)
+            if bp then
+                haveTbl[bp] = (haveTbl[bp] or 0) + 1
+                local q = self.inProd[bp] or 0
+                if q > 0 then self.inProd[bp] = q - 1 end
+            end
+            if self.stagingSet then
+                self.stagingSet[u:GetEntityId()] = u
+            end
+        end
+        return table.getn(provided)
+    end
+
+    local mp = self:_GetMasterPlatoon()
+    if not (mp and mp.GetPlatoonUnits) then return 0 end
+    local passes = 0
+    local maxPasses = 2
+    local pulled = {}
+
+    self:Dbg(('CollectFromMaster: builder=%s requesting units (need=%s)')
+        :format(self.tag, table.concat(needList, ', ')))
+
+    while passes < maxPasses do
+        local list = mp:GetPlatoonUnits() or {}
+        local tookThisPass = 0
+        for _, u in ipairs(list) do
+            if u and not u.Dead and isComplete(u) and u:GetAIBrain() == self.brain then
+                if not u.ub_tag then
+                    local bp = unitBpId(u)
+                    local want = self.wanted[bp]
+                    local have = haveTbl[bp] or 0
+                    if want and have < want then
+                        u.ub_tag = self.tag
+                        self.brain:AssignUnitsToPlatoon(platoon, {u}, 'Attack', 'GrowthFormation')
+                        haveTbl[bp] = have + 1
+                        local q = self.inProd[bp] or 0
+                        if q > 0 then self.inProd[bp] = q - 1 end
+                        if self.stagingSet then
+                            self.stagingSet[u:GetEntityId()] = u
+                        end
+                        taken = taken + 1
+                        tookThisPass = tookThisPass + 1
+                        table.insert(pulled, string.format('%d:%s', u:GetEntityId(), bp or 'unknown'))
+                    end
+                end
+            end
+        end
+
+        local stillNeed = false
+        for bp, want in pairs(self.wanted or {}) do
+            if (haveTbl[bp] or 0) < (want or 0) then
+                stillNeed = true
+                break
+            end
+        end
+
+        if tookThisPass == 0 or not stillNeed then
+            break
+        end
+
+        passes = passes + 1
+        if passes < maxPasses then
+            WaitSeconds(0.25)
+        end
+    end
+
+    if taken > 0 then
+        local remaining = formatUnitList(mp:GetPlatoonUnits() or {})
+        self:Dbg(('CollectFromMaster: builder=%s pulled [%s]; master remaining [%s]')
+            :format(self.tag, table.concat(pulled, ', '), remaining))
+    end
+    return taken
 end
 
 function Builder:CollectForPlatoon(platoon)
@@ -1318,6 +1556,9 @@ function Builder:CollectForPlatoon(platoon)
             haveTbl[bp] = (haveTbl[bp] or 0) + 1
         end
     end
+
+    -- Prefer grabbing from the base master platoon when available
+    self:_CollectFromMaster(platoon, haveTbl)
 
     -- Build a search list near leased factories and the rally point
     local rpos = (self.params and (markerPos(self.params.rallyMarker) or markerPos(self.params.baseMarker))) or self.basePos
@@ -1350,7 +1591,6 @@ function Builder:CollectForPlatoon(platoon)
                     haveTbl[bp] = have + 1
                     local q = self.inProd[bp] or 0
                     if q > 0 then self.inProd[bp] = q - 1 end
-                    self:Dbg(('Reinforce: +unit id=%d bp=%s now=%d/%d'):format(u:GetEntityId(), bp, haveTbl[bp], want))
                 end
             end
         end
@@ -1404,7 +1644,6 @@ function Builder:Mode3Loop(p)
                         if dist2d(pos, rpos) <= radius then at = at + 1 end
                     end
                 end
-                self:Dbg(('Mode3: reform wait, at rally %d/%d'):format(at, wantTotal))
                 if at >= wantTotal then break end
                 WaitSeconds(0.5)
                 waited = waited + 0.5
@@ -1418,8 +1657,7 @@ function Builder:Mode3Loop(p)
             end
             _CallPlatoonCallbacks(self.platoonCallbacks, p, 'OnHandoff', self.tag)
             if self.leaseId then
-                self.base:ReturnLease(self.leaseId)
-                self.leaseId = nil
+                self:_ReleaseLease()
             end
         else
             -- Top up missing units
@@ -1439,16 +1677,14 @@ function Builder:Mode3Loop(p)
                     -- ensure we're not accidentally building while held
                     if self.leaseId then
                         _ClearQueuesRestoreRally(self)
-                        self.base:ReturnLease(self.leaseId)
-                        self.leaseId = nil
+                        self:_ReleaseLease()
                     end
                 end
             else
                 -- no deficit; release any lease we hold
                 if self.leaseId then
                     _ClearQueuesRestoreRally(self)
-                    self.base:ReturnLease(self.leaseId)
-                    self.leaseId = nil
+                    self:_ReleaseLease()
                 end
             end
             WaitSeconds(1)
@@ -1509,12 +1745,10 @@ function Builder:Stop()
 
     _ClearQueuesRestoreRally(self)
     if self.leaseId then
-        self.base:ReturnLease(self.leaseId)
-        self.leaseId = nil
+        self:_ReleaseLease()
     end
 
     if handoffCount > 0 then
-        self:Dbg(('Stop: handing off %d units before shutdown'):format(handoffCount))
         self:_HandOffPlatoon(handoff, self.attackName or (self.tag .. '_Stop'))
     end
 end
@@ -1534,13 +1768,21 @@ function Start(params)
         o.base = BaseManager.GetBase(o.params.baseTag or params.baseTag)
     end
     assert(o.base, 'UnitBuilder requires a baseHandle or baseTag to request factories')
+    o.masterPlatoon = o.params.masterPlatoon
+    if not o.masterPlatoon and o.base and o.base.GetMasterPlatoon and o.params.useMasterPlatoon ~= false then
+        o.masterPlatoon = o.base:GetMasterPlatoon()
+    end
 
     o.basePos = ScenarioUtils.MarkerToPosition(o.params.baseMarker) or o.base.basePos
+    o.handedOff = {}
+    o.stopped = false
+    if not o.basePos then error('Invalid baseMarker: '.. tostring(params.baseMarker)) end
     o.stopped = false
     if not o.basePos then error('Invalid baseMarker: '.. tostring(params.baseMarker)) end
     o.baseWanted, o.bpOrder = flattenCounts(params.composition, params.difficulty or 2)
     o.wanted = o:GetWantedForWave(1)
     o.platoonCallbacks = _NormalizeCallbacks(o.params.platoonCallbacks, 'OnHandoff', o.tag)
+    o:DebugEscalation()
     o:Start()
     return o
 end

@@ -4,7 +4,9 @@
 -----------------------
 
 --Timetable Imports
-local SINGLEMODE = import('/maps/faf_coop_U01.v0001/SingleMode/U01_Single.lua')
+local MODEEASY = import('/maps/faf_coop_U01.v0001/SingleMode/U01_SingleEasy.lua')
+local MODEMED = import('/maps/faf_coop_U01.v0001/SingleMode/U01_SingleMed.lua')
+local MODEHARD = import('/maps/faf_coop_U01.v0001/SingleMode/U01_SingleHard.lua')
 --local COOPMODE = import('/maps/faf_coop_U01.v0001/CoopMode/U01_Coop.lua')
 
 --General Imports
@@ -14,8 +16,6 @@ local ScenarioFramework = import('/lua/ScenarioFramework.lua')
 
 local AIBuffs = import('/maps/faf_coop_U01.v0001/Ruan_AIBuff.lua')
 
-dofile('/maps/faf_coop_U01.v0001/units/uec9901_unit.bp')
-
 --Mission Tracking
 ScenarioInfo.MissionNumber = 0
 ScenarioInfo.Coop = false
@@ -24,9 +24,10 @@ local Difficulty = ScenarioInfo.Options.Difficulty
 
 --Debug
 local Debug = true
+local DbgFog = true
 local DbgSpeed = true
-local NoComs = true
-local SkipNIS = true
+local NoComs = false
+local SkipNIS = false
 
 local NIS1InitialDelay = 3
 
@@ -37,7 +38,9 @@ function OnPopulate(scenario)
     --Debug Warnings
     if Debug then
         WARN('Debug Mode On. Debug Buff enabled.')
-        Utilities.UserConRequest('SallyShears')
+        if DbgFog then
+            Utilities.UserConRequest('SallyShears')
+        end
     end
     if NoComs then
         WARN('Dialogue has been disabled. Event timing may be off')
@@ -90,6 +93,7 @@ function OnPopulate(scenario)
     end
     GetArmyBrain(ScenarioInfo.Cybran):GiveStorage('MASS', 2000)
     GetArmyBrain(ScenarioInfo.Cybran):GiveStorage('ENERGY', 40000)
+    SetArmyEconomy(ScenarioInfo.Cybran, 2000, 40000)
 
     --AI Unit Cap
     SetArmyUnitCap(ScenarioInfo.Cybran, 1000)
@@ -105,6 +109,7 @@ function OnStart(scenario)
     end
 
     ForkThread(AIBuffs.EnableAIBuff, ScenarioInfo.Cybran)
+    ForkThread(AIBuffs.FuelAIBuff, ScenarioInfo.Cybran)
 
     ScenarioFramework.AddRestrictionForAllHumans(categories.UEF)
     ScenarioFramework.AddRestrictionForAllHumans(categories.CYBRAN)
@@ -126,6 +131,12 @@ function OnStart(scenario)
     if ScenarioInfo.Coop then
         --COOPMODE.CoopModeCatch(Debug, NoComs, SkipNIS)
     else
-        SINGLEMODE.SingleModeCatch(Debug, NoComs, SkipNIS)
+        if Difficulty == 1 then
+            MODEEASY.EasyModeCatch(Debug, NoComs, SkipNIS)
+        elseif Difficulty == 2 then
+            MODEMED.MediumModeCatch(Debug, NoComs, SkipNIS)
+        else
+            MODEHARD.HardModeCatch(Debug, NoComs, SkipNIS)
+        end
     end
 end

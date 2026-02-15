@@ -58,7 +58,7 @@ function Objective_1()
     table.insert(ScenarioInfo.AssignedObjectives, ScenarioInfo.Ob1b)
 end
 
--- Objective 2, Build 1 LAB and prepare for Cybran raids. 
+-- Objective 2, Build 10 LAB and prepare for Cybran raids. 
 function Objective_2()
     if Difficulty == 1 then
         ScenarioInfo.Ob2 = Objectives.ArmyStatCompare(
@@ -77,7 +77,7 @@ function Objective_2()
         table.insert(ScenarioInfo.AssignedObjectives, ScenarioInfo.Ob2)
     else
         local time = 150
-        if Difficulty == 3 then time = 40 end
+        if Difficulty == 3 then time = 50 end
 
         ScenarioInfo.Ob2 = Objectives.Timer(
             'primary', 'incomplete',
@@ -239,4 +239,17 @@ function Objective_5Sec1()
         }
     )
     table.insert(ScenarioInfo.AssignedObjectives, ScenarioInfo.Ob5Sec1)
+end
+
+function Objective_5Sec2(CybranMex)
+    ScenarioInfo.Ob5Sec2 = Objectives.KillOrCapture(
+        'secondary', 'incomplete',
+        OpStrings.Ob5Sec2_Title, OpStrings.Ob5Sec2_Desc,
+        {
+            Units = CybranMex,
+            MarkUnits = false,
+            ShowProgress = true,
+        }
+    )
+    table.insert(ScenarioInfo.AssignedObjectives, ScenarioInfo.Ob5Sec2)
 end

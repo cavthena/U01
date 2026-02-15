@@ -71,6 +71,40 @@ Overview
         AttackFns.DefensePatrol(platoon, data)
     end
 
+    -- Area patrol ------------------------------------------------------------
+    function PatrolChain(platoon)
+        local data = {
+            Chain      = 'Patrol_Chain_1',
+            Continuous = false,
+            Formation  = 'GrowthFormation',
+        }
+        AttackFns.AreaPatrol(platoon, data)
+    end
+
+    -- Firebase ----------------------------------------------------------------
+    function BuildFirebases(platoon)
+        local data = {
+            Locations = {
+                { marker = 'Firebase_A', group = 'Firebase_A_Structs' },
+                { marker = 'Firebase_B', group = 'Firebase_B_Structs' },
+            },
+            WaitMarker  = 'Firebase_Wait',
+            SafeRadius  = 40,
+            Formation   = 'GrowthFormation',
+        }
+        AttackFns.Firebase(platoon, data)
+    end
+
+    -- Support base ------------------------------------------------------------
+    function ReinforceBase(platoon)
+        local data = {
+            BaseTags   = { 'UEF_Main', 'UEF_Forward' },
+            WaitMarker = 'Engineer_Wait',
+            Formation  = 'GrowthFormation',
+        }
+        AttackFns.Supportbase(platoon, data)
+    end
+
 Universal parameters
     All attack functions accept the arguments listed below through their
     `attackData` table.  Missing fields fall back to the stated defaults.
@@ -111,19 +145,47 @@ WaveAttack specifics
             Determines how targets are prioritised: 'closest', 'cluster', or
             'value'.  Search areas are 50 units wide and the platoon clears all
             structures within an area before moving on.
+        Bombard (boolean, default = false)
+            When true, the platoon halts at its longest weapon range and
+            attacks from distance instead of pushing into direct fire.
+        RandomizeRoute (boolean, default = true)
+            Has a 25% chance to choose a wide flanking route instead of the
+            shortest path.
 
 RaidAttack specifics
         Category (string, default = 'ECO')
             Requested structure category: 'ECO', 'BLD', 'INT', 'DEF', or 'SMT'.
             Areas are 25 units wide.  The priority chain is always
             Requested > ECO > BLD > INT > DEF.
+        RandomizeRoute (boolean, default = true)
+            Has a 25% chance to choose a wide flanking route instead of the
+            shortest path.
 
 ScoutAttack specifics
-        Designed for AIR platoons.  Each unit receives a move target.  Upon
-        arriving, the unit either selects a new destination or has a 10% chance
-        to orbit the location for up to two minutes.  Destinations are random
-        map positions with a 25% chance of being the hottest or coolest area on
-        the threat map.
+        Designed for AIR platoons.  Each unit continuously receives move
+        targets and immediately selects a new destination after arriving.
+        Destinations are random map positions with a 25% chance of being the
+        hottest or coolest area on the threat map.
+
+AreaPatrol specifics
+        Patrols along a marker chain specified by `Chain`/`ChainName`. When
+        `Continuous` is true the platoon loops from the first marker to the
+        last and back to the first. When false, the patrol bounces back and
+        forth from the last marker to the first.
+
+Firebase specifics
+        Engineer-only behavior that visits a list of location markers and
+        associated structure groups. If the location is safe (no enemy units
+        within `SafeRadius`), the platoon builds any missing structures from
+        the group before proceeding to the next location. Locations with all
+        structures already built are skipped. If no locations are available,
+        the platoon waits at `WaitMarker`.
+
+Supportbase specifics
+        Engineer-only behavior that assigns the platoon to the first base tag
+        without factories and without engineers, using
+        `manager_BaseEngineer.AssignEngineerUnit`. If every base has factories
+        and engineers, the platoon waits at `WaitMarker`.
 
 HuntAttack specifics
         Accepts `Blueprint`, `Blueprints`, `TargetBP`, or `TargetBlueprints`
@@ -139,18 +201,54 @@ HuntAttack specifics
         idles at `Marker`/`IdleMarker` (air platoons orbit).
 
 DefensePatrol specifics
-        The platoon defends the specified base marker/position by selecting a
-        unique approach vector toward enemy bases using `VectorMargin` degree
-        buckets to avoid overlap with other patrols.  It builds a patrol arc of
-        width `PatrolWidth` degrees at `PatrolDistance` from the base, clamped
-        to passable terrain for the platoon’s movement layer, and loops along
-        that route while alive.
+        The platoon defends the specified base marker/position by patrolling a
+        perimeter at `PatrolDistance`.  When enemy units enter
+        `InterceptDistance` of the base, the platoon moves to intercept before
+        resuming the perimeter loop.
 ================================================================================
 ]]
 
 local ScenarioFramework = import('/lua/ScenarioFramework.lua')
 local ScenarioUtils     = import('/lua/sim/ScenarioUtilities.lua')
 local NavUtils          = import('/lua/sim/NavUtils.lua')
+
+local function ResolveBaseManagerModule()
+    local ok, info = pcall(debug.getinfo, 1, 'S')
+    if ok and info and info.source then
+        local src = info.source
+        if type(src) == 'string' and string.sub(src, 1, 1) == '@' then
+            local dir = string.match(src, '^@(.*/)[^/]*$')
+            if dir then
+                local path = dir .. 'manager_BaseEngineer.lua'
+                local okImport, mod = pcall(import, path)
+                if okImport and mod then
+                    return mod
+                end
+            end
+        end
+    end
+
+    if ScenarioInfo and ScenarioInfo.MapPath then
+        local mp = ScenarioInfo.MapPath
+        if type(mp) == 'string' then
+            local dir = string.match(mp, '^(.-)/[^/]*$') or mp
+            if dir then
+                if string.sub(dir, 1, 1) ~= '/' then
+                    dir = '/' .. dir
+                end
+                local path = dir .. '/manager_BaseEngineer.lua'
+                local okImport, mod = pcall(import, path)
+                if okImport and mod then
+                    return mod
+                end
+            end
+        end
+    end
+
+    return import('/maps/faf_coop_U01.v0001/manager_BaseEngineer.lua')
+end
+
+local BaseManager = ResolveBaseManagerModule()
 local GetTerrainHeight  = GetTerrainHeight
 local GetSurfaceHeight  = GetSurfaceHeight
 local table_getn    = table.getn
@@ -170,13 +268,14 @@ local math_huge     = math.huge or 1e9
 local math_mod      = math.mod or math.fmod
 
 local RecheckDelay            = 60
+local ScoutRecheckDelay       = 1
+local TravelStuckSeconds      = 12
+local TravelProgressEpsilonSq = 25
 local WaveAreaRadius          = 50
 local RaidAreaRadius          = 25
 local AreaClearRadius         = 35
 local TransportStagingOffset  = 28
-local OrbitChance             = 0.10
 local HotColdChance           = 0.25
-local MaxScoutOrbitTime       = 120
 local FloodFillCell           = 32
 local FloodFillMaxRadius      = 512
 local ThreatSampleRing        = 48
@@ -189,9 +288,28 @@ local HuntDefenseWait         = 5
 local HuntRecheckInterval     = 1
 local HuntOrbitPoints         = 8
 local HuntOrbitRadius         = 32
-local DefaultVectorMargin     = 10
-local DefaultPatrolWidth      = 60
 local DefaultPatrolDistance   = 80
+local DefaultInterceptDistance = 120
+local RouteClearanceOffset    = 6
+local RouteFlankChance        = 0.25
+local RouteAlternateAttempts  = 3
+local RouteAlternateAttempts  = 3
+local RouteDetourMin          = 48
+local RouteDetourMax          = 192
+local CorridorNearDistance     = 180
+local CorridorDesiredClearance = 14
+local CorridorProbeMax         = 40
+local CorridorProbeStep        = 2
+local CorridorMaxShiftPerPass  = 6
+local CorridorPasses           = 2
+local CorridorDirections       = 8
+local CorridorSimplifyAngle    = 6
+local SegmentDirectMinDistance = 10
+local SegmentDirectMaxRatio    = 1.2
+local FirebaseSafeRadius       = 40
+local FirebaseStructureRadius  = 4
+
+local ClampPathToPlayableArea
 
 local StructureCategory = categories.STRUCTURE - categories.WALL
 local NavalStructure    = categories.STRUCTURE * categories.NAVAL
@@ -199,10 +317,10 @@ local LandStructure     = categories.STRUCTURE - categories.NAVAL
 local SubmersibleCat    = categories.SUBMERSIBLE
 
 local RaidCategories = {
-    ECO = categories.MASSEXTRACTION + categories.MASSPRODUCTION + categories.ENERGYPRODUCTION + categories.HYDROCARBON + categories.MASSSTORAGE + categories.ENERGYSTORAGE,
-    BLD = categories.FACTORY + categories.ENGINEER + (categories.STRUCTURE * categories.ENGINEERSTATION),
-    INT = categories.RADAR + categories.SONAR,
-    DEF = categories.DEFENSE + categories.ANTIMISSILE + categories.SHIELD,
+    ECO = (categories.MASSEXTRACTION + categories.MASSPRODUCTION + categories.ENERGYPRODUCTION + categories.HYDROCARBON + categories.MASSSTORAGE + categories.ENERGYSTORAGE) - categories.COMMAND,
+    BLD = (categories.FACTORY + categories.ENGINEER + (categories.STRUCTURE * categories.ENGINEERSTATION)) - categories.COMMAND,
+    INT = (categories.RADAR + categories.SONAR) - categories.COMMAND,
+    DEF = (categories.DEFENSE + categories.ANTIMISSILE + categories.SHIELD) - categories.COMMAND,
 }
 
 local LayerMapping = {
@@ -222,8 +340,6 @@ local FormationOptions = {
     NoFormation     = true,
 }
 
-local DefensePatrolAssignments = {}
-
 local function SafeWait(seconds)
     if seconds and seconds > 0 then
         WaitSeconds(seconds)
@@ -232,9 +348,26 @@ local function SafeWait(seconds)
     end
 end
 
+local function SafeGetBrain(platoon)
+    if not platoon then
+        return nil
+    end
+
+    if platoon.BeenDestroyed and platoon:BeenDestroyed() then
+        return nil
+    end
+
+    local ok, brain = pcall(platoon.GetBrain, platoon)
+    if not ok then
+        return nil
+    end
+
+    return brain
+end
+
 local function PlatoonAlive(platoon)
     if not platoon then return false end
-    local brain = platoon:GetBrain()
+    local brain = SafeGetBrain(platoon)
     if not brain then return false end
     if not brain:PlatoonExists(platoon) then return false end
     local units = platoon:GetPlatoonUnits()
@@ -332,6 +465,7 @@ local function CopyOptions(data)
     opts.AvoidDef    = opts.AvoidDef    and true or false
     opts.Transport   = opts.Transport   and true or false
     opts.Amphibious  = opts.Amphibious  and true or false
+    opts.RandomizeRoute = opts.RandomizeRoute and true or false
     opts.Formation   = ValidateFormation(opts.Formation)
     return opts
 end
@@ -461,32 +595,31 @@ local function NearestPlayablePointOnPath(startPos, path, area)
         return SurfacePoint(startPos)
     end
 
-    if not (path and table_getn(path) > 0) then
-        return ClampToPlayableArea(startPos, area, PlayableIngressBuffer)
-    end
+    local entryPoint = ClampToPlayableArea(startPos, area, PlayableIngressBuffer)
 
-    local previous = startPos
-    for index, waypoint in ipairs(path) do
-        if PositionInPlayableArea(waypoint, area) then
-            -- Remove any waypoints that are still outside the playable area so we
-            -- don't order the platoon to leave the map again after ingress.
-            for _ = 1, index - 1 do
+    if path and table_getn(path) > 0 then
+        -- Remove any waypoints that are still outside the playable area so we
+        -- don't order the platoon to leave the map again after ingress.
+        local firstInside = nil
+        for index, waypoint in ipairs(path) do
+            if PositionInPlayableArea(waypoint, area) then
+                firstInside = index
+                break
+            end
+        end
+
+        if firstInside then
+            for _ = 1, firstInside - 1 do
                 table_remove(path, 1)
             end
-            return SegmentPlayableIngress(previous, waypoint, area) or SurfacePoint(waypoint)
+        else
+            for i = table_getn(path), 1, -1 do
+                path[i] = nil
+            end
         end
-        previous = waypoint
     end
 
-    -- If no point on the path is inside, fall back to clamping the final
-    -- waypoint and clear the path so that we only order the platoon to move to
-    -- the entry point. The full path will be recalculated once the platoon is
-    -- inside the playable area.
-    local last = path[table_getn(path)]
-    for i = table_getn(path), 1, -1 do
-        path[i] = nil
-    end
-    return ClampToPlayableArea(last, area, PlayableIngressBuffer)
+    return entryPoint
 end
 
 local function BrainEnemies(brain, targetArmy)
@@ -994,6 +1127,14 @@ local function CanPathTo(platoon, layer, destination)
     return can
 end
 
+local function CanPathBetween(layer, a, b)
+    if not (a and b) then
+        return false
+    end
+    local ok, can = pcall(NavUtils.CanPathTo, layer, a, b)
+    return ok and can
+end
+
 local function AppendDestination(path, destination)
     path = path or {}
     if not destination then return path end
@@ -1009,15 +1150,119 @@ local function AppendDestination(path, destination)
     return path
 end
 
-local function FindSafePath(platoon, layer, destination, startOverride)
-    local startPos = startOverride or GetPlatoonPosition(platoon)
-    if not (startPos and destination) then return nil end
-
+local function BuildPathSegment(layer, startPos, destination)
     local ok, path = pcall(NavUtils.PathTo, layer, startPos, destination)
     if ok and path then
         return AppendDestination(path, destination)
     end
     return nil
+end
+
+local function PathLength(path)
+    if not (path and table_getn(path) >= 2) then
+        return 0
+    end
+    local total = 0
+    for i = 2, table_getn(path) do
+        local a = path[i - 1]
+        local b = path[i]
+        if a and b then
+            total = total + Distance(a, b)
+        end
+    end
+    return total
+end
+
+local function IsDirectPathSegment(layer, a, b)
+    if not (a and b) then
+        return false
+    end
+
+    local straight = Distance(a, b)
+    if straight <= SegmentDirectMinDistance then
+        return CanPathBetween(layer, a, b)
+    end
+
+    local path = BuildPathSegment(layer, a, b)
+    if not path then
+        return false
+    end
+
+    local navLength = PathLength(path)
+    if navLength <= 0 then
+        return false
+    end
+
+    return (navLength / straight) <= SegmentDirectMaxRatio
+end
+
+local function HeadingDegrees(a, b)
+    if not (a and b) then
+        return 0
+    end
+    local dx = b[1] - a[1]
+    local dz = b[3] - a[3]
+    if dx == 0 and dz == 0 then
+        return 0
+    end
+    return math_atan2(dz, dx) * 180 / math_pi
+end
+
+local function AngleDifferenceDegrees(a, b)
+    local diff = math_abs(NormalizeDegrees(a) - NormalizeDegrees(b))
+    if diff > 180 then
+        diff = 360 - diff
+    end
+    return diff
+end
+
+local function FinalApproachHeading(path, startPos, destination)
+    if not destination then
+        return nil
+    end
+    local prev = startPos
+    if path and table_getn(path) >= 2 then
+        prev = path[table_getn(path) - 1]
+        destination = path[table_getn(path)] or destination
+    end
+    if not prev then
+        return nil
+    end
+    return HeadingDegrees(prev, destination)
+end
+
+local function RandomDetourPoint(layer, startPos, destination)
+    local dx = destination[1] - startPos[1]
+    local dz = destination[3] - startPos[3]
+    local baseAngle = math_atan2(dz, dx)
+    local offset = (0.35 + math_random() * 0.45) * math_pi
+    if math_random() < 0.5 then
+        offset = -offset
+    end
+
+    local distance = Distance(startPos, destination)
+    local detourDist = math_min(math_max(distance * 0.4, RouteDetourMin), RouteDetourMax)
+    local angle = baseAngle + offset
+
+    local x = startPos[1] + math_cos(angle) * detourDist
+    local z = startPos[3] + math_sin(angle) * detourDist
+
+    local size = ScenarioInfo and (ScenarioInfo.size or ScenarioInfo.MapSize) or { 512, 512 }
+    x = math_min(math_max(x, 0), size[1])
+    z = math_min(math_max(z, 0), size[2])
+
+    return { x, AmphibiousSurfaceHeight(layer, x, z), z }
+end
+
+local function PathThreatScore(brain, layer, path)
+    if not (brain and path) then
+        return 0
+    end
+    local maxThreat = 0
+    for _, waypoint in ipairs(path) do
+        maxThreat = math_max(maxThreat, DefenseThreatNear(brain, waypoint, layer))
+    end
+    return maxThreat
 end
 
 local function MergePathSegments(segments)
@@ -1042,6 +1287,365 @@ local function MergePathSegments(segments)
     return merged
 end
 
+local function TryAlternatePath(platoon, layer, startPos, destination, opts)
+    if not (opts and opts.RandomizeRoute) or opts._repathing then
+        return nil
+    end
+    if math_random() >= RouteFlankChance then
+        return nil
+    end
+
+    local brain = platoon:GetBrain()
+    local baseline = BuildPathSegment(layer, startPos, destination)
+    if not baseline then
+        return nil
+    end
+
+    local baselineLength = PathLength(baseline)
+    local baselineHeading = FinalApproachHeading(baseline, startPos, destination)
+    if baselineLength <= 0 or not baselineHeading then
+        return nil
+    end
+
+    local baseAngle = math_atan2(startPos[3] - destination[3], startPos[1] - destination[1])
+    local bestPath = nil
+    local bestThreat = math_huge
+    local bestAngleDiff = 0
+    local bestLengthRatio = 0
+
+    for _ = 1, RouteAlternateAttempts do
+        local offsetDeg = 90 + math_random() * 50
+        local offsetRad = offsetDeg * math_pi / 180
+        if math_random() < 0.5 then
+            offsetRad = -offsetRad
+        end
+
+        local radius = 80 + math_random() * 120
+        local angle = baseAngle + offsetRad
+        local x = destination[1] + math_cos(angle) * radius
+        local z = destination[3] + math_sin(angle) * radius
+
+        local size = ScenarioInfo and (ScenarioInfo.size or ScenarioInfo.MapSize) or { 512, 512 }
+        x = math_min(math_max(x, 0), size[1])
+        z = math_min(math_max(z, 0), size[2])
+
+        local approach = { x, AmphibiousSurfaceHeight(layer, x, z), z }
+        if approach and CanPathBetween(layer, startPos, approach) and CanPathBetween(layer, approach, destination) then
+            local first = BuildPathSegment(layer, startPos, approach)
+            local second = BuildPathSegment(layer, approach, destination)
+            if first and second then
+                local candidate = MergePathSegments({ first, second })
+                local candidateHeading = FinalApproachHeading(candidate, startPos, destination)
+                local angleDiff = candidateHeading and AngleDifferenceDegrees(candidateHeading, baselineHeading) or 0
+                if angleDiff >= 60 then
+                    local candidateLength = PathLength(candidate)
+                    local lengthRatio = candidateLength / baselineLength
+                    local threat = opts.AvoidDef and PathThreatScore(brain, layer, candidate) or 0
+                    local better = false
+                    if not bestPath then
+                        better = true
+                    elseif angleDiff > bestAngleDiff + 0.5 then
+                        better = true
+                    elseif math_abs(angleDiff - bestAngleDiff) <= 0.5 then
+                        if (lengthRatio >= 1.10 and bestLengthRatio < 1.10) or lengthRatio > bestLengthRatio + 0.01 then
+                            better = true
+                        elseif math_abs(lengthRatio - bestLengthRatio) <= 0.01 and opts.AvoidDef and threat < bestThreat - 0.01 then
+                            better = true
+                        end
+                    end
+                    if better then
+                        bestPath = candidate
+                        bestAngleDiff = angleDiff
+                        bestLengthRatio = lengthRatio
+                        bestThreat = threat
+                    end
+                end
+            end
+        end
+    end
+
+    return bestPath
+end
+
+local function OffsetCorner(prev, corner, next, layer)
+    local inDx = corner[1] - prev[1]
+    local inDz = corner[3] - prev[3]
+    local outDx = next[1] - corner[1]
+    local outDz = next[3] - corner[3]
+
+    local inLen = math_sqrt(inDx * inDx + inDz * inDz)
+    local outLen = math_sqrt(outDx * outDx + outDz * outDz)
+    if inLen < 0.001 or outLen < 0.001 then
+        return CopyVector(corner)
+    end
+
+    local clamp = math_min(RouteClearanceOffset, inLen * 0.5, outLen * 0.5)
+    local sumX = (inDx / inLen) + (outDx / outLen)
+    local sumZ = (inDz / inLen) + (outDz / outLen)
+    local sumLen = math_sqrt(sumX * sumX + sumZ * sumZ)
+    if sumLen < 0.001 then
+        return CopyVector(corner)
+    end
+
+    local offsetX = sumX / sumLen * clamp
+    local offsetZ = sumZ / sumLen * clamp
+    local adjusted = {
+        corner[1] - offsetX,
+        AmphibiousSurfaceHeight(layer, corner[1] - offsetX, corner[3] - offsetZ),
+        corner[3] - offsetZ,
+    }
+
+    if IsDirectPathSegment(layer, prev, adjusted) and IsDirectPathSegment(layer, adjusted, next) then
+        return adjusted
+    end
+
+    return CopyVector(corner)
+end
+
+local function ApplyPathClearance(path, layer)
+    if not (path and table_getn(path) >= 3) then
+        return path
+    end
+
+    local widened = { CopyVector(path[1]) }
+    for i = 2, table_getn(path) - 1 do
+        local prev = widened[table_getn(widened)] or path[i - 1]
+        local corner = path[i]
+        local next = path[i + 1]
+        if prev and corner and next then
+            table_insert(widened, OffsetCorner(prev, corner, next, layer))
+        end
+    end
+
+    table_insert(widened, CopyVector(path[table_getn(path)]))
+    return widened
+end
+
+local function Normalize2D(dx, dz)
+    local len = math_sqrt(dx * dx + dz * dz)
+    if len < 0.001 then
+        return 0, 0
+    end
+    return dx / len, dz / len
+end
+
+local function GetClearanceEstimate(layer, pos)
+    if not pos then
+        return CorridorProbeMax + 1, nil
+    end
+
+    local directions = {
+        { 0, 1 },
+        { 1, 1 },
+        { 1, 0 },
+        { 1, -1 },
+        { 0, -1 },
+        { -1, -1 },
+        { -1, 0 },
+        { -1, 1 },
+    }
+    if CorridorDirections and CorridorDirections <= 4 then
+        directions = {
+            { 0, 1 },
+            { 1, 0 },
+            { 0, -1 },
+            { -1, 0 },
+        }
+    end
+
+    local x = pos[1]
+    local z = pos[3]
+    local minDistance = CorridorProbeMax + 1
+    local minDirX = nil
+    local minDirZ = nil
+
+    for _, direction in ipairs(directions) do
+        local dirX, dirZ = Normalize2D(direction[1], direction[2])
+        local blocked = nil
+        for distance = CorridorProbeStep, CorridorProbeMax, CorridorProbeStep do
+            local testX = x + dirX * distance
+            local testZ = z + dirZ * distance
+            local testPos = { testX, AmphibiousSurfaceHeight(layer, testX, testZ), testZ }
+            if not IsDirectPathSegment(layer, pos, testPos) then
+                blocked = distance
+                break
+            end
+        end
+
+        local clearance = blocked or (CorridorProbeMax + 1)
+        if clearance < minDistance then
+            minDistance = clearance
+            minDirX = dirX
+            minDirZ = dirZ
+        end
+    end
+
+    if minDirX then
+        local pushX, pushZ = Normalize2D(-minDirX, -minDirZ)
+        return minDistance, { pushX, 0, pushZ }
+    end
+
+    return minDistance, nil
+end
+
+local function ApplyCorridorCentering(path, layer, startPos, destination, opts)
+    path = ApplyPathClearance(path, layer)
+    if not (path and table_getn(path) >= 3) then
+        return path
+    end
+
+    local cumulative = {}
+    local total = 0
+    local prev = startPos
+    for i = 1, table_getn(path) do
+        local point = path[i]
+        if prev and point then
+            total = total + Distance(prev, point)
+        end
+        cumulative[i] = total
+        prev = point
+    end
+
+    for _ = 1, CorridorPasses do
+        for i = 2, table_getn(path) - 1 do
+            if cumulative[i] <= CorridorNearDistance then
+                local prevPoint = path[i - 1]
+                local current = path[i]
+                local nextPoint = path[i + 1]
+                if prevPoint and current and nextPoint then
+                    local clearance, pushDir = GetClearanceEstimate(layer, current)
+                    if pushDir and clearance < CorridorDesiredClearance then
+                        local pushAmount = math_min(CorridorMaxShiftPerPass, CorridorDesiredClearance - clearance)
+                        local attemptAmounts = { pushAmount, pushAmount * 0.5, pushAmount * 0.25 }
+                        local accepted = false
+
+                        for _, amount in ipairs(attemptAmounts) do
+                            local newX = current[1] + pushDir[1] * amount
+                            local newZ = current[3] + pushDir[3] * amount
+                            local candidate = { newX, AmphibiousSurfaceHeight(layer, newX, newZ), newZ }
+
+                            if ClampPathToPlayableArea then
+                                local clamped = ClampPathToPlayableArea({ candidate }, 0)
+                                if clamped and clamped[1] then
+                                    candidate = clamped[1]
+                                end
+                            end
+
+                            if IsDirectPathSegment(layer, prevPoint, candidate) and IsDirectPathSegment(layer, candidate, nextPoint) then
+                                path[i] = candidate
+                                accepted = true
+                                break
+                            end
+                        end
+
+                        if not accepted then
+                            path[i] = current
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    if CorridorSimplifyAngle and CorridorSimplifyAngle > 0 and table_getn(path) >= 3 then
+        local simplified = { path[1] }
+        local cosThreshold = math_cos(CorridorSimplifyAngle * math_pi / 180)
+        for i = 2, table_getn(path) - 1 do
+            local a = simplified[table_getn(simplified)]
+            local b = path[i]
+            local c = path[i + 1]
+            if a and b and c then
+                local abX, abZ = Normalize2D(b[1] - a[1], b[3] - a[3])
+                local bcX, bcZ = Normalize2D(c[1] - b[1], c[3] - b[3])
+                local dot = abX * bcX + abZ * bcZ
+                if dot >= cosThreshold and IsDirectPathSegment(layer, a, c) then
+                    -- skip b
+                else
+                    table_insert(simplified, b)
+                end
+            end
+        end
+        table_insert(simplified, path[table_getn(path)])
+        path = simplified
+    end
+
+    return path
+end
+
+local function FindSafePath(platoon, layer, destination, startOverride, opts)
+    opts = opts or {}
+
+    local startPos = startOverride or GetPlatoonPosition(platoon)
+    if not (startPos and destination) then return nil end
+
+    local path = BuildPathSegment(layer, startPos, destination)
+    if not path then
+        return nil
+    end
+
+    local alternate = TryAlternatePath(platoon, layer, startPos, destination, opts)
+    if alternate then
+        path = alternate
+    end
+
+    if opts.CorridorCentering == false then
+        return ApplyPathClearance(path, layer)
+    end
+
+    return ApplyCorridorCentering(path, layer, startPos, destination, opts)
+end
+
+local function MaxWeaponRange(platoon)
+    local units = platoon and platoon:GetPlatoonUnits() or {}
+    local maxRange = 0
+    for _, unit in ipairs(units) do
+        if unit and not unit.Dead then
+            local bp = unit:GetBlueprint()
+            if bp and bp.Weapon then
+                for _, weapon in ipairs(bp.Weapon) do
+                    if weapon.MaxRadius and weapon.MaxRadius > maxRange then
+                        maxRange = weapon.MaxRadius
+                    end
+                end
+            end
+        end
+    end
+    return maxRange
+end
+
+local function ShortenPathForBombard(path, targetPos, range)
+    if not (path and targetPos and range and range > 0 and table_getn(path) > 0) then
+        return path
+    end
+
+    local last = path[table_getn(path)]
+    if not last then
+        return path
+    end
+
+    local dx = targetPos[1] - last[1]
+    local dz = targetPos[3] - last[3]
+    local dist = math_sqrt(dx * dx + dz * dz)
+    if dist < 0.001 then
+        return path
+    end
+
+    local desired = math_max(range * 0.9, 5)
+    local scale = (dist - desired) / dist
+    if scale <= 0 then
+        return path
+    end
+
+    local adjusted = {
+        last[1] + dx * scale,
+        last[2],
+        last[3] + dz * scale,
+    }
+
+    path[table_getn(path)] = adjusted
+    return path
+end
+
 local function RequestTransports(brain, platoon, destination)
     local units = platoon:GetPlatoonUnits() or {}
     if table_getn(units) == 0 then
@@ -1056,7 +1660,7 @@ local function RequestTransports(brain, platoon, destination)
     return false
 end
 
-local function ClampPathToPlayableArea(path, buffer)
+ClampPathToPlayableArea = function(path, buffer)
     local area = GetPlayableArea()
     if not (area and path and table_getn(path) > 0) then
         return path
@@ -1083,7 +1687,8 @@ local function MoveAlongPath(platoon, path, formation, aggressiveFinal)
     -- Make sure we never issue move orders outside the playable area
     path = ClampPathToPlayableArea(path, PlayableIngressBuffer)
 
-    if formation ~= 'NoFormation' then
+    local useFormation = formation and formation ~= 'NoFormation'
+    if useFormation then
         platoon:SetPlatoonFormationOverride(formation)
     else
         platoon:SetPlatoonFormationOverride('NoFormation')
@@ -1091,41 +1696,25 @@ local function MoveAlongPath(platoon, path, formation, aggressiveFinal)
 
     IssueClearCommands(units)
 
+    local minPointSpacingSq = 20 * 20
+    local lastIssued = nil
     local count = table_getn(path)
     for index, waypoint in ipairs(path) do
-        local isFinal = aggressiveFinal and (index == count)
-        if isFinal then
-            IssueAggressiveMove(units, waypoint)
-        elseif formation == 'NoFormation' then
-            IssueMove(units, waypoint)
-        else
-            IssueFormMove(units, waypoint, formation, 0)
+        if not (lastIssued and DistanceSq(lastIssued, waypoint) < minPointSpacingSq) then
+            local isFinal = index == count
+            if useFormation then
+                IssueFormMove(units, waypoint, formation, 0)
+            else
+                if aggressiveFinal and isFinal then
+                    IssueAggressiveMove(units, waypoint)
+                else
+                    IssueMove(units, waypoint)
+                end
+            end
+
+            lastIssued = waypoint
         end
     end
-end
-
-local function WaitForPlayableIngress(platoon, area, timeout)
-    area = area or GetPlayableArea()
-    if not area then
-        return true
-    end
-
-    local elapsed = 0
-    while PlatoonAlive(platoon) do
-        SafeWait(1)
-        elapsed = elapsed + 1
-
-        local pos = GetPlatoonPosition(platoon)
-        if pos and PositionInPlayableArea(pos, area) then
-            return true
-        end
-
-        if timeout and elapsed >= timeout then
-            break
-        end
-    end
-
-    return false
 end
 
 local function TransportAndMove(platoon, destination, opts)
@@ -1170,57 +1759,96 @@ local function AttackTargetArea(platoon, target, opts)
     end
 
     local startedOutside = area and not PositionInPlayableArea(startPos, area)
-
-    local path = FindSafePath(platoon, layer, target.position)
-    if startedOutside then
-        local ingress = NearestPlayablePointOnPath(startPos, path, area)
-        if ingress then
-            local ingressSegment = { CopyVector(ingress) }
-            local interiorPath = FindSafePath(platoon, layer, target.position, ingress)
-            path = MergePathSegments({ ingressSegment, interiorPath })
+    local bombardRange = nil
+    if opts.Bombard then
+        bombardRange = MaxWeaponRange(platoon)
+        if bombardRange <= 0 then
+            bombardRange = nil
         end
     end
 
+    local path = nil
+    local ingress = nil
+    if startedOutside then
+        ingress = NearestPlayablePointOnPath(startPos, nil, area)
+        if ingress then
+            path = FindSafePath(platoon, layer, target.position, ingress, opts)
+            if not (path and table_getn(path) > 0) then
+                path = BuildPathSegment(layer, ingress, target.position)
+            end
+
+            if path and table_getn(path) > 0 then
+                local first = path[1]
+                if not (first and DistanceSq(first, ingress) < 1) then
+                    table_insert(path, 1, CopyVector(ingress))
+                end
+            else
+                path = { CopyVector(ingress) }
+            end
+        end
+    else
+        path = FindSafePath(platoon, layer, target.position, nil, opts)
+    end
+
     local canPath = CanPathTo(platoon, layer, target.position)
+    if not canPath and ingress then
+        canPath = CanPathBetween(layer, ingress, target.position)
+    end
     if not canPath then
         if opts.Transport then
             if not TransportAndMove(platoon, target.position, opts) then
                 return 'fail'
             end
-            path = FindSafePath(platoon, layer, target.position)
+            path = FindSafePath(platoon, layer, target.position, nil, opts)
         else
             return 'fail'
         end
     elseif not path then
-        path = FindSafePath(platoon, layer, target.position)
+        path = FindSafePath(platoon, layer, target.position, nil, opts)
     end
 
     if not path then
         return 'fail'
     end
 
-    MoveAlongPath(platoon, path, opts.Formation)
-
-    if startedOutside then
-        if not WaitForPlayableIngress(platoon, area, PlayableIngressTimeout * 2) then
-            return 'fail'
-        end
+    if bombardRange then
+        path = ShortenPathForBombard(path, target.position, bombardRange)
     end
+
+    MoveAlongPath(platoon, path, opts.Formation)
     
     local arrived = false
     local epsilon = 5
     local units = platoon:GetPlatoonUnits() or {}
-    local elapsed = 0
+    local stuckSeconds = 0
+    local lastPos = GetPlatoonPosition(platoon)
+    local lastDistSq = lastPos and DistanceSq(lastPos, target.position) or nil
     while PlatoonAlive(platoon) do
         local pos = GetPlatoonPosition(platoon)
         if not pos then break end
-        if DistanceSq(pos, target.position) < ((target.radius + epsilon) * (target.radius + epsilon)) then
+        local arrivalRadius = target.radius + epsilon
+        if bombardRange and bombardRange > arrivalRadius then
+            arrivalRadius = bombardRange
+        end
+        if DistanceSq(pos, target.position) < (arrivalRadius * arrivalRadius) then
             arrived = true
             break
         end
         SafeWait(1)
-        elapsed = elapsed + 1
-        if elapsed >= RecheckDelay then
+        local updatedPos = GetPlatoonPosition(platoon)
+        if not updatedPos then break end
+        local distSq = DistanceSq(updatedPos, target.position)
+        local movedSq = lastPos and DistanceSq(updatedPos, lastPos) or 0
+        if lastDistSq and (lastDistSq - distSq) > TravelProgressEpsilonSq then
+            stuckSeconds = 0
+        elseif movedSq > TravelProgressEpsilonSq then
+            stuckSeconds = 0
+        else
+            stuckSeconds = stuckSeconds + 1
+        end
+        lastDistSq = distSq
+        lastPos = CopyVector(updatedPos)
+        if stuckSeconds >= TravelStuckSeconds then
             return 'repath'
         end
     end
@@ -1236,12 +1864,13 @@ local function AttackTargetArea(platoon, target, opts)
 
     IssueClearCommands(units)
     local formation = opts.Formation or 'GrowthFormation'
-    if formation ~= 'NoFormation' then
-        -- Keep the platoon in the requested formation for the final approach
+    if opts.Bombard and bombardRange then
+        platoon:SetPlatoonFormationOverride(formation)
+        -- Hold position and engage at range
+    elseif formation ~= 'NoFormation' then
         platoon:SetPlatoonFormationOverride(formation)
         IssueFormMove(units, target.position, formation, 0)
     else
-        -- No formation requested: fall back to original behaviour
         local finalAggressive = target and target.finalAggressiveMove
         if finalAggressive == nil then
             finalAggressive = true
@@ -1355,17 +1984,14 @@ local function AttackLoop(platoon, resolver, opts)
             local result = AttackTargetArea(platoon, currentTarget, opts)
             if result == 'success' then
                 currentTarget = nil
+                opts._repathing = nil
                 SafeWait(1)
             elseif result == 'repath' then
-                local newTarget = resolver(brain, platoon, opts, layer)
-                if newTarget then
-                    currentTarget = newTarget
-                else
-                    currentTarget = nil
-                    WaitForTargets(brain, RecheckDelay)
-                end
+                opts._repathing = true
+                SafeWait(1)
             else
                 currentTarget = nil
+                opts._repathing = nil
                 SafeWait(RecheckDelay)
             end
         end
@@ -1419,19 +2045,6 @@ local function AssignScoutOrder(unit, destination)
     if not unit or unit.Dead then return end
     IssueClearCommands({ unit })
     IssueMove({ unit }, destination)
-end
-
-local function OrbitUnit(unit, center)
-    if not unit or unit.Dead then return end
-    local points = 6
-    local radius = 30
-    for i = 1, points do
-        local angle = (i / points) * 6.28318
-        local x = center[1] + math_cos(angle) * radius
-        local z = center[3] + math_sin(angle) * radius
-        local y = GetSurfaceHeight(x, z)
-        IssueMove({ unit }, { x, y, z })
-    end
 end
 
 local function OrbitWaypoints(center, count, radius)
@@ -1492,6 +2105,74 @@ local function NormalizeCategoryList(value)
     end
 
     return list
+end
+
+local function SpecPosition(spec)
+    if not spec then return nil end
+    if spec.GetPosition then
+        return spec:GetPosition()
+    end
+    return spec.Position or spec.position or spec.Pos or spec.pos
+end
+
+local function SpecFacing(spec)
+    if not spec then return 0 end
+    if spec.GetOrientation then
+        local o = spec:GetOrientation() or {}
+        return o[1] or 0
+    end
+    local o = spec.Orientation or spec.orientation or {}
+    return o[1] or 0
+end
+
+local function SpecBlueprintId(spec)
+    if not spec then return nil end
+    if spec.BlueprintID then
+        return string.lower(spec.BlueprintID)
+    end
+    if spec.GetBlueprint then
+        local bp = spec:GetBlueprint()
+        if bp and bp.BlueprintId then
+            return string.lower(bp.BlueprintId)
+        end
+    end
+    local id = spec.type or spec.bp or spec.bpId or spec.BlueprintId or spec.blueprintId or spec.UnitId
+    if type(id) == 'string' then
+        return string.lower(id)
+    end
+    return nil
+end
+
+local function ArmyNameFromBrain(brain)
+    if not brain then return nil end
+    local idx = brain.GetArmyIndex and brain:GetArmyIndex()
+    if not idx then return nil end
+    if ArmyBrains and ArmyBrains[idx] and ArmyBrains[idx].Name then
+        return ArmyBrains[idx].Name
+    end
+    return ('ARMY_' .. tostring(idx))
+end
+
+local function GetGroupSpecs(brain, groupName)
+    if not groupName then return {} end
+    local armyName = ArmyNameFromBrain(brain)
+    if armyName and ScenarioUtils.AssembleArmyGroup then
+        local ok, spec = pcall(function() return ScenarioUtils.AssembleArmyGroup(armyName, groupName) end)
+        if ok and type(spec) == 'table' and next(spec) then
+            return spec
+        end
+    end
+
+    if ScenarioInfo and ScenarioInfo.Groups and ScenarioInfo.Groups[groupName] and ScenarioInfo.Groups[groupName].Units then
+        return ScenarioInfo.Groups[groupName].Units
+    end
+
+    local ok, units = pcall(function() return ScenarioUtils.GetUnitGroup(groupName) end)
+    if ok and type(units) == 'table' then
+        return units
+    end
+
+    return {}
 end
 
 local function UnitBlueprintId(unit)
@@ -1567,6 +2248,173 @@ local function ResolveMarkerPosition(marker)
     return nil
 end
 
+local function ResolveChainPositions(chainName)
+    if not chainName then
+        return {}
+    end
+    local ok, chain = pcall(ScenarioUtils.ChainToPositions, chainName)
+    if not ok or type(chain) ~= 'table' then
+        return {}
+    end
+    local points = {}
+    for _, pos in ipairs(chain) do
+        if pos and pos[1] and pos[3] then
+            table_insert(points, { pos[1], pos[2] or GetSurfaceHeight(pos[1], pos[3]), pos[3] })
+        end
+    end
+    return points
+end
+
+local function NormalizePatrolPoints(points, layer)
+    local out = {}
+    for _, pos in ipairs(points or {}) do
+        if pos and pos[1] and pos[3] then
+            local y = AmphibiousSurfaceHeight(layer, pos[1], pos[3])
+            table_insert(out, { pos[1], y, pos[3] })
+        end
+    end
+    return out
+end
+
+local function BuildPingPongRoute(points)
+    local out = {}
+    local count = table_getn(points)
+    for i = 1, count do
+        table_insert(out, points[i])
+    end
+    for i = count - 1, 2, -1 do
+        table_insert(out, points[i])
+    end
+    return out
+end
+
+local function FirebaseLocationsFromData(data)
+    local locations = {}
+    if not data then
+        return locations
+    end
+
+    if type(data.Locations) == 'table' then
+        for _, entry in ipairs(data.Locations) do
+            if type(entry) == 'table' then
+                local marker = entry.marker or entry.Marker or entry.location or entry.Location or entry[1]
+                local group = entry.group or entry.Group or entry.structGroup or entry.StructGroup or entry[2]
+                if marker or group then
+                    table_insert(locations, { marker = marker, group = group })
+                end
+            end
+        end
+    elseif type(data.Markers) == 'table' then
+        local groups = data.Groups or data.StructureGroups or data.GroupNames
+        for i, marker in ipairs(data.Markers) do
+            table_insert(locations, { marker = marker, group = groups and groups[i] or nil })
+        end
+    end
+
+    return locations
+end
+
+local function FirebaseLocationSafe(brain, pos, safeRadius, opts)
+    local enemies = BrainEnemies(brain, opts and opts.TargetArmy)
+    local units = AreaUnits(brain, enemies, pos, safeRadius, categories.ALLUNITS, opts and opts.IntelOnly)
+    return table_getn(units) == 0
+end
+
+local function FirebaseMissingStructures(brain, groupName, radius)
+    local missing = {}
+    local specs = GetGroupSpecs(brain, groupName)
+    for _, spec in pairs(specs or {}) do
+        local bp = SpecBlueprintId(spec)
+        local pos = SpecPosition(spec)
+        local facing = SpecFacing(spec)
+        if bp and pos and pos[1] and pos[3] then
+            local found = false
+            local units = brain:GetUnitsAroundPoint(categories.STRUCTURE, pos, radius or FirebaseStructureRadius, 'Ally') or {}
+            for _, unit in ipairs(units) do
+                if unit and not unit.Dead and UnitBlueprintId(unit) == bp then
+                    found = true
+                    break
+                end
+            end
+            if not found then
+                table_insert(missing, { bp = bp, pos = pos, facing = facing })
+            end
+        end
+    end
+    return missing
+end
+
+local function IssueFirebaseBuilds(platoon, builds)
+    local units = platoon:GetPlatoonUnits() or {}
+    if table_getn(units) == 0 then
+        return
+    end
+    IssueClearCommands(units)
+    for _, spec in ipairs(builds or {}) do
+        if spec.bp and spec.pos then
+            IssueBuildMobile(units, spec.pos, spec.bp, spec.facing or 0)
+        end
+    end
+end
+
+local function FirebaseBuildsComplete(brain, builds, radius)
+    for _, spec in ipairs(builds or {}) do
+        local pos = spec.pos
+        local bp = spec.bp
+        if pos and bp then
+            local found = false
+            local units = brain:GetUnitsAroundPoint(categories.STRUCTURE, pos, radius or FirebaseStructureRadius, 'Ally') or {}
+            for _, unit in ipairs(units) do
+                if unit and not unit.Dead and UnitBlueprintId(unit) == bp then
+                    found = true
+                    break
+                end
+            end
+            if not found then
+                return false
+            end
+        end
+    end
+    return true
+end
+
+local function CountFactories(base)
+    if not base or not base.GetFactoryControl then
+        return 0
+    end
+    local control = base:GetFactoryControl()
+    if not (control and control.factoryState) then
+        return 0
+    end
+    local count = 0
+    for _, state in pairs(control.factoryState) do
+        local unit = state and state.unit
+        if unit and not unit.Dead then
+            count = count + 1
+        end
+    end
+    return count
+end
+
+local function CountEngineers(base)
+    if not base or not base.GetEngineerHandle then
+        return 0
+    end
+    local handle = base:GetEngineerHandle()
+    if not (handle and handle.tracked) then
+        return 0
+    end
+    local count = 0
+    for _, set in pairs(handle.tracked) do
+        for _, unit in pairs(set or {}) do
+            if unit and not unit.Dead then
+                count = count + 1
+            end
+        end
+    end
+    return count
+end
+
 local function IdleAtMarker(platoon, markerPos, layer, formation)
     if not (platoon and markerPos) then return end
     local units = platoon:GetPlatoonUnits() or {}
@@ -1598,73 +2446,6 @@ local function NormalizeDegrees(deg)
     return deg
 end
 
-local function AngleBetweenPositions(a, b)
-    local dx = b[1] - a[1]
-    local dz = b[3] - a[3]
-    return NormalizeDegrees(math_atan2(dz, dx) * 180 / math_pi)
-end
-
-local function BucketAngle(deg, margin)
-    margin = margin or DefaultVectorMargin
-    if margin <= 0 then
-        return NormalizeDegrees(deg)
-    end
-    local bucket = math_floor((deg + (margin * 0.5)) / margin) * margin
-    return NormalizeDegrees(bucket)
-end
-
-local function PruneDefensePatrolAssignments()
-    for bucket, platoon in pairs(DefensePatrolAssignments) do
-        if not PlatoonAlive(platoon) then
-            DefensePatrolAssignments[bucket] = nil
-        end
-    end
-end
-
-local function CanPathBetween(layer, a, b)
-    if not (a and b) then
-        return false
-    end
-    local ok, can = pcall(NavUtils.CanPathTo, layer, a, b)
-    return ok and can
-end
-
-local function SafePatrolPoint(layer, basePos, angleDeg, distance)
-    local attempts = 3
-    local dist = distance
-    local angleRad = angleDeg * math_pi / 180
-    while attempts > 0 do
-        local x = basePos[1] + math_cos(angleRad) * dist
-        local z = basePos[3] + math_sin(angleRad) * dist
-        local point = { x, GetSurfaceHeight(x, z), z }
-        if CanPathBetween(layer, basePos, point) then
-            return point
-        end
-        dist = dist * 0.6
-        attempts = attempts - 1
-    end
-    return nil
-end
-
-local function BuildPatrolPoints(layer, basePos, angleDeg, widthDeg, distance)
-    local halfWidth = (widthDeg or DefaultPatrolWidth) * 0.5
-    local leftAngle = angleDeg - halfWidth
-    local rightAngle = angleDeg + halfWidth
-
-    local leftPoint = SafePatrolPoint(layer, basePos, leftAngle, distance)
-    local rightPoint = SafePatrolPoint(layer, basePos, rightAngle, distance)
-
-    if not (leftPoint and rightPoint) then
-        return nil
-    end
-
-    return {
-        leftPoint,
-        rightPoint,
-        basePos,
-    }
-end
-
 local function IssuePatrolRoute(platoon, points, formation)
     if not (platoon and points and table_getn(points) > 0) then
         return
@@ -1677,7 +2458,10 @@ local function IssuePatrolRoute(platoon, points, formation)
     IssueClearCommands(units)
     platoon:SetPlatoonFormationOverride(formation or 'GrowthFormation')
 
-    for _, point in ipairs(points) do
+    IssueMove(units, points[1])
+
+    for i = 2, table_getn(points) do
+        local point = points[i]
         IssuePatrol(units, point)
     end
 
@@ -1685,103 +2469,45 @@ local function IssuePatrolRoute(platoon, points, formation)
     IssuePatrol(units, points[1])
 end
 
-local function EnemyBasePositions(brain)
-    local positions = {}
-    if not brain then
-        return positions
+local function BuildPerimeterPoints(layer, basePos, distance)
+    local points = {}
+    local count = 6
+    for i = 1, count do
+        local angle = (i / count) * 6.28318
+        local x = basePos[1] + math_cos(angle) * distance
+        local z = basePos[3] + math_sin(angle) * distance
+        local point = { x, AmphibiousSurfaceHeight(layer, x, z), z }
+        if CanPathBetween(layer, basePos, point) then
+            table_insert(points, point)
+        end
     end
 
-    local enemies = BrainEnemies(brain, nil)
-    local seen = {}
+    if table_getn(points) == 0 then
+        table_insert(points, basePos)
+    end
+    return points
+end
 
-    for _, enemyIndex in ipairs(enemies) do
-        local eBrain = ArmyBrains[enemyIndex]
-        if eBrain then
-            local candidates = {}
-            if eBrain.StartPos then
-                table_insert(candidates, eBrain.StartPos)
-            end
-            local name = eBrain.Nickname or eBrain.Name or string.format('ARMY_%s', enemyIndex)
-            if ScenarioInfo and ScenarioInfo.ArmySetup and name and ScenarioInfo.ArmySetup[name] and ScenarioInfo.ArmySetup[name].StartPos then
-                table_insert(candidates, ScenarioInfo.ArmySetup[name].StartPos)
-            end
-            local ok, markerPos = pcall(ScenarioUtils.MarkerToPosition, name)
-            if ok and markerPos then
-                table_insert(candidates, markerPos)
-            end
-            local commanders = eBrain:GetListOfUnits(categories.COMMAND, false) or {}
-            for _, commander in ipairs(commanders) do
-                if commander and not commander.Dead then
-                    local pos = commander:GetPosition()
-                    if pos then
-                        table_insert(candidates, pos)
-                    end
-                end
-            end
+local function FindIntruder(brain, layer, basePos, interceptRadius, opts)
+    local enemies = BrainEnemies(brain, opts and opts.TargetArmy)
+    local units = AreaUnits(brain, enemies, basePos, interceptRadius, categories.ALLUNITS, opts and opts.IntelOnly)
+    units = FilterUnits(units, layer, opts and opts.Submersible)
 
-            for _, pos in ipairs(candidates) do
-                if pos and pos[1] and pos[3] then
-                    local key = string.format('%.1f:%.1f', pos[1], pos[3])
-                    if not seen[key] then
-                        seen[key] = true
-                        table_insert(positions, { pos[1], GetSurfaceHeight(pos[1], pos[3]), pos[3] })
-                    end
+    local closest
+    local closestDist = math_huge
+    for _, unit in ipairs(units) do
+        if unit and not unit.Dead and CanTargetUnit(layer, opts and opts.Submersible, unit) then
+            local pos = unit:GetPosition()
+            if pos then
+                local dist = DistanceSq(basePos, pos)
+                if dist < closestDist then
+                    closestDist = dist
+                    closest = unit
                 end
             end
         end
     end
-
-    return positions
-end
-
-local function BuildDefenseVectors(brain, basePos, margin)
-    local candidates = {}
-    local enemyBases = EnemyBasePositions(brain)
-    for _, targetPos in ipairs(enemyBases) do
-        local angle = AngleBetweenPositions(basePos, targetPos)
-        local bucket = BucketAngle(angle, margin)
-        local distance = Distance(basePos, targetPos)
-        local existing = candidates[bucket]
-        if (not existing) or distance < existing.distance then
-            candidates[bucket] = {
-                bucket = bucket,
-                angle = angle,
-                distance = distance,
-            }
-        end
-    end
-
-    local list = {}
-    for _, entry in pairs(candidates) do
-        table_insert(list, entry)
-    end
-
-    table.sort(list, function(a, b)
-        if math_abs(a.distance - b.distance) < 0.001 then
-            return a.bucket < b.bucket
-        end
-        return a.distance < b.distance
-    end)
-
-    return list
-end
-
-local function AssignDefenseVector(platoon, candidates)
-    if not candidates then
-        return nil
-    end
-
-    PruneDefensePatrolAssignments()
-
-    for _, entry in ipairs(candidates) do
-        local assigned = DefensePatrolAssignments[entry.bucket]
-        if not assigned or assigned == platoon then
-            DefensePatrolAssignments[entry.bucket] = platoon
-            return entry
-        end
-    end
-
-    return nil
+    return closest
 end
 
 local function FindHuntTarget(brain, platoon, opts, layer, excluded, requireSafe)
@@ -1877,7 +2603,7 @@ local function TrackHuntTarget(platoon, targetInfo, opts, layer)
                 end
             end
             if not skipIteration then
-                local path = FindSafePath(platoon, layer, unitPos)
+                local path = FindSafePath(platoon, layer, unitPos, nil, opts)
                 if not path then
                     SafeWait(RecheckDelay)
                     skipIteration = true
@@ -1930,6 +2656,9 @@ end
 
 function WaveAttack(platoon, data)
     local opts = CopyOptions(data)
+    if not data or data.RandomizeRoute == nil then
+        opts.RandomizeRoute = true
+    end
     opts.Type = opts.Type or opts.TargetType or 'closest'
     local function resolver(brain, p, o, layer)
         return ChooseBestArea(brain, p, o, layer, WaveAreaRadius, opts.Type, StructureCategory)
@@ -1939,6 +2668,9 @@ end
 
 function RaidAttack(platoon, data)
     local opts = CopyOptions(data)
+    if not data or data.RandomizeRoute == nil then
+        opts.RandomizeRoute = true
+    end
     opts.Category = opts.Category or opts.TargetType or 'ECO'
     local function resolver(brain, p, o, layer)
         return FindRaidTarget(brain, p, o, layer)
@@ -1955,44 +2687,182 @@ function ScoutAttack(platoon, data)
 
     local state = {}
     for _, unit in ipairs(units) do
-        state[unit.EntityId] = { destination = SelectScoutDestination(brain, opts), orbiting = false, orbitTime = 0 }
+        state[unit.EntityId] = { destination = SelectScoutDestination(brain, opts) }
         AssignScoutOrder(unit, state[unit.EntityId].destination)
     end
 
     while PlatoonAlive(platoon) do
-        SafeWait(RecheckDelay)
+        SafeWait(ScoutRecheckDelay)
         units = platoon:GetPlatoonUnits() or {}
         if table_getn(units) == 0 then break end
         for _, unit in ipairs(units) do
             if unit and not unit.Dead then
                 local info = state[unit.EntityId]
                 if not info then
-                    info = { destination = SelectScoutDestination(brain, opts), orbiting = false, orbitTime = 0 }
+                    info = { destination = SelectScoutDestination(brain, opts) }
                     state[unit.EntityId] = info
                     AssignScoutOrder(unit, info.destination)
                 end
-                if info.orbiting then
-                    info.orbitTime = info.orbitTime - RecheckDelay
-                    if info.orbitTime <= 0 then
-                        info.orbiting = false
-                        info.destination = SelectScoutDestination(brain, opts)
-                        AssignScoutOrder(unit, info.destination)
-                    end
-                end
+
                 local pos = unit:GetPosition()
                 local dest = info.destination
-                if dest and pos and DistanceSq(pos, dest) < 400 then
-                    if not info.orbiting and math_random() < OrbitChance then
-                        info.orbiting = true
-                        info.orbitTime = math_random(10, MaxScoutOrbitTime)
-                        OrbitUnit(unit, dest)
-                    elseif not info.orbiting then
-                        info.destination = SelectScoutDestination(brain, opts)
-                        AssignScoutOrder(unit, info.destination)
+                if (not dest) or (dest and pos and DistanceSq(pos, dest) < 400) then
+                    info.destination = SelectScoutDestination(brain, opts)
+                    AssignScoutOrder(unit, info.destination)
+                end
+            end
+        end
+    end
+end
+
+function AreaPatrol(platoon, data)
+    local opts = CopyOptions(data)
+    local layer = DetermineLayer(platoon, opts.Amphibious)
+    if not layer then return end
+
+    local chainName = data and (data.Chain or data.ChainName or data.PatrolChain or data.MarkerChain)
+    local points = ResolveChainPositions(chainName)
+
+    if data and type(data.Markers) == 'table' then
+        for _, marker in ipairs(data.Markers) do
+            local pos = ResolveMarkerPosition(marker)
+            if pos then
+                table_insert(points, pos)
+            end
+        end
+    end
+
+    points = NormalizePatrolPoints(points, layer)
+    if table_getn(points) < 2 then
+        return
+    end
+
+    local continuous = true
+    if data and data.Continuous ~= nil then
+        continuous = data.Continuous and true or false
+    end
+
+    local route = points
+    if not continuous then
+        route = BuildPingPongRoute(points)
+    end
+
+    IssuePatrolRoute(platoon, route, opts.Formation)
+
+    while PlatoonAlive(platoon) do
+        SafeWait(RecheckDelay)
+    end
+end
+
+function Firebase(platoon, data)
+    local opts = CopyOptions(data)
+    local brain = platoon:GetBrain()
+    if not brain then return end
+    local layer = DetermineLayer(platoon, opts.Amphibious)
+    local locations = FirebaseLocationsFromData(data)
+    local waitPos = ResolveMarkerPosition(data and (data.WaitMarker or data.Marker or data.IdleMarker))
+    local safeRadius = (data and (data.SafeRadius or data.SafeRange or data.Radius)) or FirebaseSafeRadius
+    local structureRadius = (data and (data.StructureRadius or data.BuildRadius)) or FirebaseStructureRadius
+
+    while PlatoonAlive(platoon) do
+        local acted = false
+        for _, loc in ipairs(locations) do
+            local pos = ResolveMarkerPosition(loc.marker) or loc.position
+            if pos and FirebaseLocationSafe(brain, pos, safeRadius, opts) then
+                local missing = FirebaseMissingStructures(brain, loc.group, structureRadius)
+                if table_getn(missing) > 0 then
+                    acted = true
+                    local path = FindSafePath(platoon, layer, pos, nil, opts)
+                    if path then
+                        MoveAlongPath(platoon, path, opts.Formation, true)
+                    else
+                        local units = platoon:GetPlatoonUnits() or {}
+                        if table_getn(units) > 0 then
+                            IssueMove(units, pos)
+                        end
+                    end
+
+                    IssueFirebaseBuilds(platoon, missing)
+
+                    while PlatoonAlive(platoon) do
+                        if FirebaseBuildsComplete(brain, missing, structureRadius) then
+                            break
+                        end
+                        SafeWait(5)
                     end
                 end
             end
         end
+
+        if not acted then
+            if waitPos then
+                IdleAtMarker(platoon, waitPos, layer, opts.Formation)
+            end
+            SafeWait(RecheckDelay)
+        end
+    end
+end
+
+function Supportbase(platoon, data)
+    local opts = CopyOptions(data)
+    local brain = platoon:GetBrain()
+    if not brain then return end
+    local layer = DetermineLayer(platoon, opts.Amphibious)
+    local waitPos = ResolveMarkerPosition(data and (data.WaitMarker or data.Marker or data.IdleMarker))
+
+    local tags = {}
+    local rawTags = data and (data.BaseTags or data.BaseTag or data.Tags or data.Tag)
+    if type(rawTags) == 'table' then
+        tags = rawTags
+    elseif rawTags then
+        tags = { rawTags }
+    end
+
+    while PlatoonAlive(platoon) do
+        local targetBase = nil
+        for _, tag in ipairs(tags) do
+            local base = BaseManager and BaseManager.GetBase and BaseManager.GetBase(tag)
+            if base then
+                local factories = CountFactories(base)
+                local engineers = CountEngineers(base)
+                if factories == 0 and engineers == 0 then
+                    targetBase = base
+                    break
+                end
+            end
+        end
+
+        if targetBase then
+            local basePos = targetBase.basePos
+            if not basePos and targetBase.params and targetBase.params.baseMarker then
+                basePos = ResolveMarkerPosition(targetBase.params.baseMarker)
+            end
+
+            if basePos then
+                local path = FindSafePath(platoon, layer, basePos, nil, opts)
+                if path then
+                    MoveAlongPath(platoon, path, opts.Formation, true)
+                else
+                    local units = platoon:GetPlatoonUnits() or {}
+                    if table_getn(units) > 0 then
+                        IssueMove(units, basePos)
+                    end
+                end
+            end
+
+            if targetBase.AssignEngineerUnit then
+                targetBase:AssignEngineerUnit(platoon)
+            end
+            if brain and brain.PlatoonExists and brain:PlatoonExists(platoon) then
+                brain:DisbandPlatoon(platoon)
+            end
+            return
+        end
+
+        if waitPos then
+            IdleAtMarker(platoon, waitPos, layer, opts.Formation)
+        end
+        SafeWait(RecheckDelay)
     end
 end
 
@@ -2067,35 +2937,60 @@ function DefensePatrol(platoon, data)
     end
     basePos = SurfacePoint(basePos)
 
-    local vectorMargin   = math_max(1, (data and (data.VectorMargin or data.VectorSpread or data.MarginDegrees)) or DefaultVectorMargin)
-    local patrolWidthDeg = (data and (data.PatrolWidth or data.WidthDegrees or data.Width)) or DefaultPatrolWidth
-    local patrolDistance = (data and (data.PatrolDistance or data.Distance)) or DefaultPatrolDistance
+    local patrolDistance   = (data and (data.PatrolDistance or data.Distance)) or DefaultPatrolDistance
+    local interceptRadius  = (data and (data.InterceptDistance or data.InterceptRadius or data.InterceptRange)) or DefaultInterceptDistance
 
-    local vectors = BuildDefenseVectors(brain, basePos, vectorMargin)
-    local selected = AssignDefenseVector(platoon, vectors)
-    if not selected then
-        return
-    end
-
-    local patrolPoints = BuildPatrolPoints(layer, basePos, selected.angle, patrolWidthDeg, patrolDistance)
-    if not patrolPoints then
-        DefensePatrolAssignments[selected.bucket] = nil
-        return
-    end
-
+    local patrolPoints = BuildPerimeterPoints(layer, basePos, patrolDistance)
     IssuePatrolRoute(platoon, patrolPoints, opts.Formation)
 
     while PlatoonAlive(platoon) do
-        SafeWait(RecheckDelay)
-    end
+        local intruder = FindIntruder(brain, layer, basePos, interceptRadius, opts)
+        if intruder then
+            local targetPos = intruder:GetPosition()
+            if targetPos then
+                local path = FindSafePath(platoon, layer, targetPos, nil, opts)
+                if path then
+                    MoveAlongPath(platoon, path, opts.Formation, true)
+                else
+                    local units = platoon:GetPlatoonUnits() or {}
+                    if table_getn(units) > 0 then
+                        IssueAggressiveMove(units, targetPos)
+                    end
+                end
 
-    DefensePatrolAssignments[selected.bucket] = nil
+                local units = platoon:GetPlatoonUnits() or {}
+                if table_getn(units) > 0 then
+                    IssueAttack(units, intruder)
+                end
+
+                local elapsed = 0
+                local maxIntercept = math_max(interceptRadius * 1.5, interceptRadius + 32)
+                while PlatoonAlive(platoon) and intruder and not intruder.Dead do
+                    local pos = intruder:GetPosition()
+                    if not pos or DistanceSq(pos, basePos) > (maxIntercept * maxIntercept) then
+                        break
+                    end
+                    SafeWait(1)
+                    elapsed = elapsed + 1
+                    if elapsed >= RecheckDelay then
+                        break
+                    end
+                end
+            end
+            IssuePatrolRoute(platoon, patrolPoints, opts.Formation)
+        else
+            SafeWait(5)
+        end
+    end
 end
 
 return {
     WaveAttack = WaveAttack,
     RaidAttack = RaidAttack,
     ScoutAttack = ScoutAttack,
+    AreaPatrol = AreaPatrol,
+    Firebase = Firebase,
+    Supportbase = Supportbase,
     HuntAttack = HuntAttack,
     DefensePatrol = DefensePatrol,
 }

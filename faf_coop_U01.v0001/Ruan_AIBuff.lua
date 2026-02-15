@@ -40,7 +40,37 @@ BuffBlueprint{
     },
 }
 
+BuffBlueprint{
+    Name = 'AIFuelBuff',
+    DisplayName = 'AIFuelBuff',
+    BuffType = 'FUELRATIO',
+    Stacks = 'REPLACE',
+    Duration = -1,
+    Value = 1,
+    Affects = {},
+}
+
 -- ========================BUFF FUNCTIONS======================================
+--AI Fuel Buff
+function FuelAIBuff(armyIndex)
+    local AIR_CATS = categories.AIR - categories.FACTORY
+
+    while true do
+        local brain = ArmyBrains[armyIndex]
+        if brain then
+            local units = brain:GetListOfUnits(AIR_CATS)
+            for _, u in ipairs(units or {}) do
+                if u and not u.Dead and EntityCategoryContains(AIR_CATS, u) then
+                    if not Buff.HasBuff(u, 'AIFuelBuff') then
+                        Buff.ApplyBuff(u, 'AIFuelBuff')
+                    end
+                end
+            end
+        end
+        WaitSeconds(60)
+    end
+end
+
 --AI income and build buff
 function EnableAIBuff(armyIndex)
     local ECO_CATS = categories.MASSEXTRACTION + categories.MASSFABRICATION + categories.ENERGYPRODUCTION
@@ -62,8 +92,8 @@ function EnableAIBuff(armyIndex)
                 end
             end
         end
-        ArmyBrains[armyIndex]:GiveResource('MASS', 1000)
-        ArmyBrains[armyIndex]:GiveResource('ENERGY', 20000)
+        --ArmyBrains[armyIndex]:GiveResource('MASS', 1000)
+        --ArmyBrains[armyIndex]:GiveResource('ENERGY', 20000)
         WaitSeconds(5)
     end
 end

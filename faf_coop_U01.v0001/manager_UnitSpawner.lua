@@ -6,8 +6,7 @@
 --   • Hands the platoon to your attack function immediately (ForkAIThread)
 --   • Four modes:
 --       1) Wave: spawn → handoff → wait waveCooldown → next wave
---       2) Loss-gated: spawn → handoff → wait until the platoon has lost >= mode2LossThreshold → next wave,
---          and if (and only if) the current platoon has been wiped out, apply waveCooldown before spawning again.
+--       2) Loss-gated: spawn → handoff → wait until the platoon has lost >= mode2LossThreshold, then apply waveCooldown before spawning again.
 --       3) Limited waves: spawn → handoff → wait a shrinking waveCooldown → next wave, until mode3WaveCount is reached.
 --          Composition entries can specify the wave they join via a 4th field (wave start, 1-indexed).
 --       4) Batched window: spawn a fixed number of platoons (mode4PlatoonCount) evenly spaced over waveCooldown, then stop.
@@ -25,7 +24,7 @@
 --     },
 --     difficulty         = ScenarioInfo.Options.Difficulty or 2,  -- 1..3
 --     attackFn           = 'Platoon_BasicAttack',                 -- function or global function name
---     waveCooldown       = 15,                                    -- seconds; in mode 2 it is applied only after a wipe
+--     waveCooldown       = 15,                                    -- seconds; in mode 2 it starts once threshold is met
 --     mode               = 1,                                     -- 1: cooldown, 2: gate by losses, 3: finite waves, 4: batched waves
 --     mode2LossThreshold = 0.50,                                  -- fraction lost to trigger next wave
 --     mode3WaveCount     = 5,                                     -- number of waves for mode 3
@@ -95,16 +94,47 @@ local ScenarioUtils = import('/lua/sim/ScenarioUtilities.lua')
      return out
  end
 
-local function escalationFactor(params, waveNo)
-    local pct   = math.max(0, params and params.escalationPercent or 0)
+local function normalizeEscalationPercent(raw)
+    local pct = tonumber(raw) or 0
+    if pct <= 0 then
+        return 0
+    end
+    if pct > 1 then
+        pct = pct / 100
+    end
+    return pct
+end
+
+local function getEscalationInfo(params, waveNo)
+    local inc   = normalizeEscalationPercent(params and params.escalationPercent)
     local every = math.floor(params and params.escalationFrequency or 0)
-    if pct <= 0 or every <= 0 then return 1 end
+    if inc <= 0 or every <= 0 then
+        return 1, 0
+    end
 
     local wave = math.max(1, waveNo or 1)
     local steps = math.floor((wave - 1) / every)
-    if steps <= 0 then return 1 end
+    local factor = 1 + (inc * steps)
+    return factor, steps
+end
 
-    return (1 + pct / 100) ^ steps
+local function escalationFactor(params, waveNo)
+    local factor = getEscalationInfo(params, waveNo)
+    return factor
+end
+
+local function scaledCount(count, factor)
+    local use = count or 0
+    if factor ~= 1 then
+        local scaled = math.max(0, math.floor((use * factor) + 1e-6))
+        if factor >= 1 and scaled < use then
+            scaled = use
+        elseif factor > 1 and use > 0 and scaled == use then
+            scaled = use + 1
+        end
+        use = scaled
+    end
+    return use
 end
 
 local function markerPos(mark)
@@ -210,7 +240,6 @@ Spawner.__index = Spawner
 
 function Spawner:Log(msg) LOG(('[US:%s] %s'):format(self.tag, msg)) end
  function Spawner:Warn(msg) WARN(('[US:%s] %s'):format(self.tag, msg)) end
- function Spawner:Dbg(msg) if self.params.debug then self:Log(msg) end end
  
  function Spawner:GetEntryCount(entry)
      local d = math.max(1, math.min(3, self.params.difficulty or 2))
@@ -221,6 +250,23 @@ function Spawner:Log(msg) LOG(('[US:%s] %s'):format(self.tag, msg)) end
  
 function Spawner:GetEscalationFactor(waveNo)
     return escalationFactor(self.params, waveNo)
+end
+
+function Spawner:DebugEscalation()
+    if not (self.params and self.params.debug) or self._debugEscalationDone then
+        return
+    end
+    self._debugEscalationDone = true
+
+    for wave = 1, 16 do
+        local factor, steps = getEscalationInfo(self.params, wave)
+        local total = 0
+        local wanted = self:BuildWantedForWave(wave)
+        for _, cnt in pairs(wanted) do
+            total = total + (cnt or 0)
+        end
+        self:Log(string.format('EscalationDebug wave=%d steps=%d factor=%.2f totalWanted=%d', wave, steps, factor, total))
+    end
 end
 
 function Spawner:GetNextSpawnPos()
@@ -242,9 +288,7 @@ function Spawner:BuildWantedForWave(waveNo)
     for _, entry in ipairs(self.composition) do
         if not waveNo or (self.params.mode == 3 and waveNo >= entry.waveStart) or (self.params.mode ~= 3) then
             local count = self:GetEntryCount(entry)
-            if factor ~= 1 then
-                count = math.max(0, math.floor(count * factor))
-            end
+            count = scaledCount(count, factor)
             if count > 0 then
                 wanted[entry.blueprint] = (wanted[entry.blueprint] or 0) + count
             end
@@ -335,10 +379,6 @@ function Spawner:HandOffToAttack(platoon)
     end
  
      local function _AttackWrapper(p, fn)
-         self:Dbg(('AttackWrapper: label=%s units=%d fnType=%s')
-             :format((p.GetPlatoonLabel and p:GetPlatoonLabel()) or '?',
-                     table.getn(p:GetPlatoonUnits() or {}),
-                     type(fn)))
         if type(fn) == 'function' then
             return fn(p, self.params.attackData)
         elseif type(fn) == 'string' then
@@ -385,7 +425,6 @@ function Spawner:SpawnWave(waveNo, wanted)
     self:HandOffToAttack(platoon)
 
     local unitCount = resolveUnitCount(spawned)
-    self:Dbg(('SpawnWave: spawned %d units as %s'):format(unitCount, label))
     return platoon, spawned, unitCount, wanted
 end
  
@@ -399,27 +438,18 @@ end
      while not self.stopped do
         if not platoon or not self.brain:PlatoonExists(platoon) then
             local alive = countComplete((platoon and platoon.GetPlatoonUnits and platoon:GetPlatoonUnits()) or {})
-            self:Dbg('Mode2Gate: platoon gone; gate passed')
             self:InvokeBooleanCallbacks('OnMode2ThresholdMet', true, platoon, alive, wantTotal, thr)
             return
         end
          local alive = countComplete(platoon:GetPlatoonUnits() or {})
          local lost = math.max(0, wantTotal - alive)
          local frac = (wantTotal > 0) and (lost / wantTotal) or 1
-         self:Dbg(('Mode2Gate: alive=%d lost=%d frac=%.2f thr=%.2f'):format(alive, lost, frac, thr))
         if frac >= thr then
             self:InvokeBooleanCallbacks('OnMode2ThresholdMet', true, platoon, alive, wantTotal, thr)
             return
         end
          WaitSeconds(2)
      end
- end
- 
- local function PlatoonIsDead(brain, platoon)
-     if not platoon then return true end
-     if not brain:PlatoonExists(platoon) then return true end
-     local units = platoon:GetPlatoonUnits() or {}
-     return countComplete(units) == 0
  end
  
  function Spawner:GetMode3Cooldown(waveIndex, totalWaves)
@@ -463,9 +493,7 @@ function Spawner:RunMode2()
         if self.stopped then break end
         self:WaitForLossGate(platoon, unitCount)
         if self.stopped then break end
-        if PlatoonIsDead(self.brain, platoon) then
-            WaitSeconds(math.max(0, self.params.waveCooldown or 0))
-        end
+        WaitSeconds(math.max(0, self.params.waveCooldown or 0))
     end
 end
 
@@ -481,7 +509,6 @@ function Spawner:RunMode3()
          self.wave = wave
         local wanted = self:BuildWantedForWave(wave)
         if tableIsEmpty(wanted) then
-            self:Dbg(('Mode3: wave %d has no units to spawn'):format(wave))
         end
         local platoon, units, unitCount, usedWanted = self:SpawnWave(wave, wanted)
         local keepRunning = self:InvokeBooleanCallbacks('OnWaveNumber', true, wave, platoon, unitCount, usedWanted)
@@ -533,7 +560,6 @@ function Spawner:RunMode4()
 end
  
 function Spawner:MainLoop()
-    self:Dbg('MainLoop: start')
     local mode = self.params.mode or 1
     if mode == 2 then
         self:RunMode2()
@@ -544,7 +570,6 @@ function Spawner:MainLoop()
     else
         self:RunMode1()
     end
-    self:Dbg('MainLoop: end')
     self.mainThread = nil
 end
  
@@ -606,6 +631,7 @@ end
     o.baseWanted  = o:BuildWantedForWave(1)
     o.callbacks   = {}
     o:RegisterInitialCallbacks()
+    o:DebugEscalation()
     o:Start()
     return o
 end

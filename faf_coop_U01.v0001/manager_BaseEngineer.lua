@@ -6,7 +6,8 @@
 Overview
     Spawns a base layout, keeps a dedicated engineer platoon alive, rebuilds/repairs
     structures, manages experimental projects, and exposes a factory allocator
-    that other systems (such as manager_UnitBuilder) can lease through.
+    that other systems (such as manager_UnitBuilder) can lease through. Also
+    maintains an untagged master platoon for freshly completed units.
 
 Usage
     local BaseManager = import('/maps/.../manager_BaseEngineer.lua')
@@ -28,6 +29,7 @@ Usage
         engineerFactoryPriority = 200,                       -- optional build request priority (0..200)
         engineerFactoryCount    = 1,                         -- optional factories to lease for engineers (0:any)
         factoryStallTimeout     = 30,                        -- optional seconds before idle leases are revoked (default 30)
+        masterInterval          = 1,                         -- optional seconds between master platoon sweeps
         tasks = {                                            -- optional engineer task preferences
             weights = { BUILD = 1.0, ASSIST = 1.0, EXP = 1.25 }, -- severity multipliers (higher == more coverage)
             exp     = { marker = 'Base_Marker', cooldown = 0, bp = nil, attackFn = nil, attackData = {} }, -- experimental build config
@@ -52,6 +54,7 @@ Public API
         baseHandle:ReturnLease(leaseId[, reason])
             -- Leases revoked for stalls trigger `reason == 'stall'` before being removed
         baseHandle:GetGrantedUnits(leaseId)
+        baseHandle:GetMasterPlatoon()
         baseHandle:PushEngineerBuildTask(bpId, positionOrMarker, facing)
         baseHandle:AssignEngineerUnit(unitOrPlatoon)
             -- Accepts a single unit or platoon; valid types are T1/T2/T3/SCU/ACU engineers
@@ -59,6 +62,8 @@ Public API
             -- Accepts Start.tasks fields (weights/exp) to tweak severity or experimental config at runtime
         baseHandle:GetStructureSnapshot()
         baseHandle:AddBuildGroup(structGroupName)
+        baseHandle:RemoveBuildGroup(structGroupName)
+        baseHandle:ReplaceBuildGroup(oldGroupName, newGroupName)
         baseHandle:GetEngineerHandle()
         baseHandle:Stop()
 
@@ -157,6 +162,18 @@ local function _TryGetUnitsFromGroup(name)
 end
 
 local function _EnsureEngineerPlatoon(brain, name)
+    if not (brain and name) then return nil end
+    local platoon = nil
+    if brain.GetPlatoonUniquelyNamed then
+        platoon = brain:GetPlatoonUniquelyNamed(name)
+        if platoon then
+            return platoon
+        end
+    end
+    return brain:MakePlatoon(name, '')
+end
+
+local function _EnsureMasterPlatoon(brain, name)
     if not (brain and name) then return nil end
     local platoon = nil
     if brain.GetPlatoonUniquelyNamed then
@@ -276,7 +293,6 @@ function M:_OnEngineerGone(u)
     if tier and self.tracked[tier] then
         self.tracked[tier][id] = nil
         self.engTask[id] = nil
-        self:Dbg(('Engineer lost: id=%d tier=%s'):format(id, tostring(tier)))
     end
 end
 
@@ -372,10 +388,6 @@ function M:_CreateStructGroups()
         -- Skip if the group is already present in the world (e.g., spawned earlier)
         local existing = _TryGetUnitsFromGroup(gname)
         if table.getn(existing) > 0 then
-            if self.params.debug then
-                self:Dbg(('StructGroups: "%s" already present (%d units); skip create')
-                    :format(gname, table.getn(existing)))
-            end
         else
             -- Create the group for our brain's army
             local ok, units = pcall(function()
@@ -385,10 +397,6 @@ function M:_CreateStructGroups()
                 -- NEW: remember the actual unit instances we just created
                 self.structGroupUnits = self.structGroupUnits or {}
                 self.structGroupUnits[gname] = units or {}
-                if self.params.debug then
-                    local count = (units and table.getn(units)) or 0
-                    self:Dbg(('StructGroups: created "%s" (%d units)'):format(gname, count))
-                end
             else
                 self:Warn(('StructGroups: failed to create "%s"'):format(tostring(gname)))
             end
@@ -421,8 +429,6 @@ function M:_SpawnInitial()
     spawnMany(map.T3, 'T3',  self.desired.T3 or 0)
     spawnMany(map.SCU, 'SCU', self.desired.SCU or 0)
 
-    self:Dbg(('Initial spawn done: T1=%d T2=%d T3=%d SCU=%d')
-        :format(self.desired.T1 or 0, self.desired.T2 or 0, self.desired.T3 or 0, self.desired.SCU or 0))
 end
 
 -- ===================== Factory lease + build =====================
@@ -447,8 +453,19 @@ function M:RequestLease()
     return self.leaseId
 end
 
+function M:_ReleaseLeaseLocal(reason)
+    local leaseId = self.leaseId
+    self.leaseId = nil
+    self.leased = {}
+    self.pending = {}
+    if leaseId then
+        self.alloc:ReturnLease(leaseId, reason)
+    end
+end
+
 function M:OnLeaseGranted(factories, leaseId)
     if self.stopped then return end
+    if leaseId ~= self.leaseId then return end
     self.leased = {}
     self.pending = {}
     local i = 1
@@ -460,12 +477,12 @@ function M:OnLeaseGranted(factories, leaseId)
         end
         i = i + 1
     end
-    self:Dbg(('Lease granted: %d factories'):format(tgetn(factories)))
     self:QueueNeededBuilds()
 end
 
 function M:OnLeaseUpdated(factories, leaseId)
     if self.stopped then return end
+    if leaseId ~= self.leaseId then return end
     self.leased = self.leased or {}
     self.pending = self.pending or {}
     local i = 1
@@ -588,9 +605,6 @@ function M:QueueNeededBuilds()
                     local id = f:GetEntityId()
                     self.pending[id] = self.pending[id] or {}
                     self.pending[id][bp] = (self.pending[id][bp] or 0) + 1
-                    if self.params.debug then
-                        self:Log(('Queued %s at f=%d; pending for that bp now %d'):format(bp, id, self.pending[id][bp]))
-                    end
                 end
             end
 
@@ -618,9 +632,7 @@ function M:QueueNeededBuilds()
         local missing = 0
         for _, n in pairs(d) do missing = missing + (n or 0) end
         if missing <= 0 and self.leaseId then
-            self.alloc:ReturnLease(self.leaseId)
-            self.leaseId = nil
-            self:Dbg('Headcount satisfied; lease returned')
+            self:_ReleaseLeaseLocal()
         end
     end
 end
@@ -659,8 +671,7 @@ function M:_CollectorSweep()
                         self.tracked[tier] = self.tracked[tier] or {}
                         if not self.tracked[tier][id] then
                             self.tracked[tier][id] = u
-    self.engTask[id] = self.engTask[id] or 'IDLE'
-                            self:Dbg(('Collector verify ours: id=%d tier=%s'):format(id, tier))
+                            self.engTask[id] = self.engTask[id] or 'IDLE'
                         end
                     -- Case B: untagged AND we have a pending slot for this bp at any leased factory
                     elseif not u.be_tag then
@@ -683,9 +694,6 @@ function M:_CollectorSweep()
                                             self:_TagAndTrack(u, tier)
                                             ptab[bp] = pend - 1
                                             claimed = true
-                                            if self.params.debug then
-                                                self:Log(('Claimed roll-off bp=%s near f=%d; pending now %d'):format(bp, fid, ptab[bp]))
-                                            end
                                             break
                                         end
                                     end
@@ -697,22 +705,6 @@ function M:_CollectorSweep()
             end
         end
         k = k + 1
-    end
-end
-
--- DEBUG: periodic headcount summary
-function M:_DebugHeadcount()
-    if not self.params.debug then return end
-    self._dbgTick = (self._dbgTick or 0) + 1
-    if self._dbgTick >= 5 then -- roughly every 5 seconds (loop sleeps 1s)
-        self._dbgTick = 0
-        local a1 = self:_AliveCountTier('T1')
-        local a2 = self:_AliveCountTier('T2')
-        local a3 = self:_AliveCountTier('T3')
-        local as = self:_AliveCountTier('SCU')
-        self:Log(('Headcount T1:%d/%d T2:%d/%d T3:%d/%d SCU:%d/%d (missing=%d)')
-            :format(a1, self.desired.T1 or 0, a2, self.desired.T2 or 0, a3, self.desired.T3 or 0, as, self.desired.SCU or 0,
-                    _sum(self:_ComputeDeficit())))
     end
 end
 
@@ -916,6 +908,7 @@ end
 function M:_InitTasking()
     self.tasks = _NormalizeTasks(self.params)
     self.engTask = {}
+    self.activeBuilds = {}
     self.expState = { active=false, lastDoneAt=0, startedAt=0, bp=nil, pos=nil }
     self.buildQueue = {}
 end
@@ -945,7 +938,81 @@ function M:_EnumerateEngineers()
     return list
 end
 
+function M:_IsBuildLocked(id, u)
+    if not (self.activeBuilds and id) then return false end
+    local rec = self.activeBuilds[id]
+    if not rec then return false end
+
+    local target = rec.target
+    if target and (target.Dead or isComplete(target)) then
+        self.activeBuilds[id] = nil
+        return false
+    end
+
+    if _safeIs(u, 'Building') then
+        return true
+    end
+
+    if target and (not target.Dead) then
+        return true
+    end
+
+    local cq = _safeCQ(u)
+    if table.getn(cq) > 0 then
+        return true
+    end
+
+    local now = GetGameTimeSeconds and GetGameTimeSeconds() or 0
+    if (now - (rec.startedAt or now)) < 10 then
+        return true
+    end
+
+    self.activeBuilds[id] = nil
+    return false
+end
+
+function M:_WatchBuild(u, id, rec)
+    while not self.stopped and self.activeBuilds and self.activeBuilds[id] == rec do
+        if not (u and not u.Dead) then
+            break
+        end
+
+        if (not rec.target) or rec.target.Dead then
+            rec.target = u.UnitBeingBuilt or (u.GetFocusUnit and u:GetFocusUnit())
+        end
+
+        local target = rec.target
+        if target and isComplete(target) then
+            break
+        end
+
+        local cq = _safeCQ(u)
+        if _safeIs(u, 'Building') or (target and (not target.Dead)) or table.getn(cq) > 0 then
+            WaitSeconds(1)
+        else
+            local now = GetGameTimeSeconds and GetGameTimeSeconds() or 0
+            local elapsed = now - (rec.startedAt or now)
+            if elapsed < 10 then
+                WaitSeconds(1)
+            else
+                break
+            end
+        end
+    end
+
+    if self.activeBuilds and self.activeBuilds[id] == rec then
+        self.activeBuilds[id] = nil
+        if not self.stopped then
+            self:_AssignEngineer(id, u, 'IDLE')
+        end
+    end
+end
+
 function M:_AssignEngineer(id, u, task)
+    if task ~= 'BUILD' and self:_IsBuildLocked(id, u) then
+        return
+    end
+
     local prev = self.engTask[id]
     if prev ~= task then
         self.engTask[id] = task
@@ -978,6 +1045,114 @@ end
 function M:_StructKey(bp, pos)
     if not (bp and pos and pos[1] and pos[3]) then return nil end
     return string.format('%s@%.1f,%.1f,%.1f', bp, pos[1], pos[2] or 0, pos[3])
+end
+
+function M:_StructPosKey(pos)
+    if not (pos and pos[1] and pos[3]) then return nil end
+    return string.format('%.1f,%.1f,%.1f', pos[1], pos[2] or 0, pos[3])
+end
+
+local function _TaskPosition(task)
+    if not task then return nil end
+    local pos = task.pos or task.position
+    if type(pos) == 'string' then
+        pos = ScenarioUtils.MarkerToPosition(pos)
+    end
+    return pos
+end
+
+function M:_HasQueuedBuildForKey(key)
+    if not key then return false end
+    for _, task in ipairs(self.buildQueue or {}) do
+        local bp = task.bp or task.blueprint or task.bpId
+        local pos = _TaskPosition(task)
+        if self:_StructKey(bp, pos) == key then
+            return true
+        end
+    end
+    return false
+end
+
+function M:_ConsumeBuildTaskByKey(key)
+    if not key then return nil end
+    for idx, task in ipairs(self.buildQueue or {}) do
+        local bp = task.bp or task.blueprint or task.bpId
+        local pos = _TaskPosition(task)
+        if self:_StructKey(bp, pos) == key then
+            return table.remove(self.buildQueue, idx)
+        end
+    end
+    return nil
+end
+
+local function _Distance2DSq(a, b)
+    if not (a and b and a[1] and a[3] and b[1] and b[3]) then return math.huge end
+    local dx = a[1] - b[1]
+    local dz = a[3] - b[3]
+    return dx*dx + dz*dz
+end
+
+function M:_BuildTasks()
+    local tasks = {}
+    local seen = {}
+    for _, task in ipairs(self.buildQueue or {}) do
+        local bp = task.bp or task.blueprint or task.bpId
+        local pos = _TaskPosition(task)
+        local key = self:_StructKey(bp, pos)
+        if bp and pos and key and (not seen[key]) then
+            table.insert(tasks, { task = task, key = key })
+            seen[key] = true
+        end
+    end
+    return tasks
+end
+
+function M:_PlanBuildAssignments(builders, tasks)
+    local plan = {}
+    tasks = tasks or self:_BuildTasks()
+    if table.getn(tasks) == 0 or table.getn(builders or {}) == 0 then
+        return plan
+    end
+
+    local unclaimed = {}
+    for _, entry in ipairs(tasks) do
+        table.insert(unclaimed, entry)
+    end
+
+    local function pickNearest(unit, pool)
+        if not (unit and unit.GetPosition) then return nil end
+        local uPos = unit:GetPosition()
+        local bestIdx, bestDist
+        for idx, entry in ipairs(pool) do
+            local pos = _TaskPosition(entry.task)
+            local dist = _Distance2DSq(uPos, pos)
+            if not bestDist or dist < bestDist then
+                bestDist = dist
+                bestIdx = idx
+            end
+        end
+        return bestIdx
+    end
+
+    local available = table.getn(unclaimed)
+    for _, rec in ipairs(builders) do
+        local pool = (available > 0) and unclaimed or tasks
+        local pickIdx = pickNearest(rec.u, pool)
+        if pickIdx then
+            local entry = pool[pickIdx]
+            plan[rec.id] = {
+                task    = entry.task,
+                key     = entry.key,
+                primary = (available > 0),
+            }
+            if available > 0 then
+                table.remove(unclaimed, pickIdx)
+                available = available - 1
+            end
+        end
+    end
+
+    return plan
 end
 
 function M:_EnsureStructState()
@@ -1043,6 +1218,95 @@ function M:_AbsorbStructGroup(gname)
     return slotsAdded
 end
 
+function M:_CollectStructGroupSlots(gname)
+    if not gname then return {} end
+    local slots, isLive = self:_GetGroupUnitsOrSpec(gname)
+    local collected = {}
+
+    local function addSlot(bpTarget, pos, facing)
+        if not (bpTarget and pos and pos[1] and pos[3]) then return end
+        local target = string.lower(bpTarget)
+        local key = self:_StructKey(target, pos)
+        local posKey = self:_StructPosKey(pos)
+        if key then
+            table.insert(collected, {
+                bpTarget = target,
+                bpRoot   = _ChainRoot(target) or target,
+                pos      = pos,
+                facing   = facing or 0,
+                key      = key,
+                posKey   = posKey,
+            })
+        end
+    end
+
+    if isLive then
+        for i = 1, table.getn(slots) do
+            local u = slots[i]
+            if _unitIsStructure(u) then
+                addSlot(_bpIdFromUnit(u), _posOf(u), _headingOf(u))
+            end
+        end
+    else
+        for _, spec in pairs(slots or {}) do
+            addSlot(_SpecBlueprintId(spec), _SpecPosition(spec), _SpecFacing(spec))
+        end
+    end
+
+    return collected
+end
+
+function M:_CollectStructSlotsForGroups(groups)
+    local slots = {}
+    local keySet = {}
+    local posSet = {}
+
+    for _, gname in ipairs(groups or {}) do
+        for _, slot in ipairs(self:_CollectStructGroupSlots(gname)) do
+            if slot.key and not keySet[slot.key] then
+                table.insert(slots, {
+                    bpTarget = slot.bpTarget,
+                    bpRoot   = slot.bpRoot,
+                    pos      = slot.pos,
+                    facing   = slot.facing,
+                })
+                keySet[slot.key] = true
+            end
+            if slot.posKey then
+                posSet[slot.posKey] = true
+            end
+        end
+    end
+
+    return slots, keySet, posSet
+end
+
+function M:_GetLiveEngineers()
+    local engineers = {}
+    for _, tier in pairs(self.tracked or {}) do
+        for _, unit in pairs(tier or {}) do
+            if unit and (not unit.Dead) and unit.GetAIBrain and unit:GetAIBrain() == self.brain then
+                table.insert(engineers, unit)
+            end
+        end
+    end
+    return engineers
+end
+
+function M:_IssueReclaimTargets(targets)
+    if table.getn(targets or {}) == 0 then return 0 end
+    local engineers = self:_GetLiveEngineers()
+    if table.getn(engineers) == 0 then return 0 end
+    local issued = 0
+    for _, target in ipairs(targets) do
+        if target and not target.Dead then
+            IssueReclaim(engineers, target)
+            issued = issued + 1
+        end
+    end
+    return issued
+end
+
 function M:_InitStructTemplate()
     self.struct = { slots = {} }
     self.structKeys = {}
@@ -1050,11 +1314,6 @@ function M:_InitStructTemplate()
     local total = 0
     for _, gname in ipairs(self.params.structGroups or {}) do
         total = total + (self:_AbsorbStructGroup(gname) or 0)
-    end
-
-    if self.params.debug then
-        self:Dbg(('StructTemplate: %d slots captured from %d group(s)')
-            :format(table.getn(self.struct.slots or {}), table.getn(self.params.structGroups or {})))
     end
 end
 
@@ -1074,12 +1333,103 @@ function M:AddBuildGroup(gname)
 
     local added = self:_AbsorbStructGroup(gname) or 0
     if added > 0 then
-        self:Dbg(('Struct group added to snapshot: "%s" (%d slots)'):format(gname, added))
         self:_SyncStructureDemand()
-    elseif self.params.debug then
-        self:Dbg(('Struct group "%s" added but no new slots captured'):format(tostring(gname)))
     end
     return added
+end
+
+function M:RemoveBuildGroup(gname)
+    if not gname then return 0 end
+    self.params.structGroups = self.params.structGroups or {}
+
+    local updated = {}
+    local removed = false
+    for _, name in ipairs(self.params.structGroups) do
+        if name ~= gname then
+            table.insert(updated, name)
+        else
+            removed = true
+        end
+    end
+    if not removed then return 0 end
+
+    local removedSlots = self:_CollectStructGroupSlots(gname)
+    self.params.structGroups = updated
+
+    local newSlots, newKeySet, newPosSet = self:_CollectStructSlotsForGroups(updated)
+
+    local reclaimTargets = {}
+    local removedCount = 0
+    for _, slot in ipairs(removedSlots) do
+        if slot.key and not newKeySet[slot.key] then
+            self:_ConsumeBuildTaskByKey(slot.key)
+            removedCount = removedCount + 1
+        end
+        if slot.posKey and not newPosSet[slot.posKey] then
+            local present = _FindStructureForSlot(self.brain, slot)
+            if present then
+                table.insert(reclaimTargets, present)
+            end
+        end
+    end
+
+    self.struct = { slots = newSlots }
+    self.structKeys = newKeySet
+
+    self:_IssueReclaimTargets(reclaimTargets)
+    self:_SyncStructureDemand()
+    return removedCount
+end
+
+function M:ReplaceBuildGroup(oldGroup, newGroup)
+    if not (oldGroup and newGroup) then return 0 end
+    self.params.structGroups = self.params.structGroups or {}
+
+    local updated = {}
+    local removed = false
+    local seenNew = false
+    for _, name in ipairs(self.params.structGroups) do
+        if name == oldGroup then
+            removed = true
+        else
+            if name == newGroup then
+                seenNew = true
+            end
+            table.insert(updated, name)
+        end
+    end
+    if not seenNew then
+        table.insert(updated, newGroup)
+    end
+    if not removed and seenNew then
+        return 0
+    end
+
+    local removedSlots = self:_CollectStructGroupSlots(oldGroup)
+    self.params.structGroups = updated
+
+    local newSlots, newKeySet, newPosSet = self:_CollectStructSlotsForGroups(updated)
+    local reclaimTargets = {}
+    local removedCount = 0
+    for _, slot in ipairs(removedSlots) do
+        if slot.key and not newKeySet[slot.key] then
+            self:_ConsumeBuildTaskByKey(slot.key)
+            removedCount = removedCount + 1
+        end
+        if slot.posKey and not newPosSet[slot.posKey] then
+            local present = _FindStructureForSlot(self.brain, slot)
+            if present then
+                table.insert(reclaimTargets, present)
+            end
+        end
+    end
+
+    self.struct = { slots = newSlots }
+    self.structKeys = newKeySet
+
+    self:_IssueReclaimTargets(reclaimTargets)
+    self:_SyncStructureDemand()
+    return removedCount
 end
 
 function M:_SyncStructureDemand()
@@ -1090,10 +1440,9 @@ function M:_SyncStructureDemand()
 
         if not present then
             -- Missing/destroyed -> build chain root
-            self:PushBuildTask(slot.bpRoot, slot.pos, slot.facing or 0)
-            if self.params.debug then
-                self:Dbg(('Rebuild queued: want=%s (root=%s) at (%.1f,%.1f,%.1f)')
-                    :format(slot.bpTarget, slot.bpRoot, slot.pos[1], slot.pos[2], slot.pos[3]))
+            local key = self:_StructKey(slot.bpRoot, slot.pos)
+            if not self:_HasQueuedBuildForKey(key) then
+                self:PushBuildTask(slot.bpRoot, slot.pos, slot.facing or 0)
             end
         else
             local cur = _bpIdFromUnit(present)
@@ -1104,10 +1453,6 @@ function M:_SyncStructureDemand()
                         local nxt = _ChainNext(cur)
                         if nxt then
                             IssueUpgrade({present}, nxt)
-                            if self.params.debug then
-                                self:Dbg(('Upgrade issued: %s → %s at (%.1f,%.1f,%.1f)')
-                                    :format(cur or '?', nxt, slot.pos[1], slot.pos[2], slot.pos[3]))
-                            end
                         end
                     end
                 else
@@ -1229,11 +1574,26 @@ function M:_TickAssist(u, id, now, targets, distrib)
     end
 end
 
-function M:_TickBuild(u, id, now)
+function M:_TickBuild(u, id, now, assignment)
     if not u or u.Dead then return end
-    if _safeIs(u, 'Building') then return end
+    self.activeBuilds = self.activeBuilds or {}
+    if _safeIs(u, 'Building') then
+        if not self.activeBuilds[id] then
+            local rec = { startedAt = now }
+            self.activeBuilds[id] = rec
+            self.brain:ForkThread(function() self:_WatchBuild(u, id, rec) end)
+        end
+        return
+    end
 
-    local task = table.remove(self.buildQueue, 1)
+    local task = assignment and assignment.task
+    if assignment and assignment.primary and assignment.key then
+        self:_ConsumeBuildTaskByKey(assignment.key)
+    end
+
+    if not task then
+        task = table.remove(self.buildQueue, 1)
+    end
     if not task then
         self:_AssignEngineer(id, u, 'IDLE')
         return
@@ -1249,22 +1609,17 @@ function M:_TickBuild(u, id, now)
 
     local landed = _TryIssueBuildMobile(u, bp, pos, face)
     if not landed then
-        table.insert(self.buildQueue, 1, {bp=bp, pos=pos, facing=face})
+        local shouldRequeue = (not assignment) or assignment.primary
+        if shouldRequeue then
+            table.insert(self.buildQueue, 1, {bp=bp, pos=pos, facing=face})
+        end
         self:_AssignEngineer(id, u, 'IDLE')
         return
     end
 
-    self.brain:ForkThread(function()
-        local waited = 0
-        local timeout = 1200
-        while not (u.Dead) and waited < timeout do
-            WaitSeconds(1)
-            waited = waited + 1
-            if not _safeIs(u, 'Building') then
-                break
-            end
-        end
-    end)
+    local rec = { bp = bp, pos = pos, facing = face, key = assignment and assignment.key, startedAt = now }
+    self.activeBuilds[id] = rec
+    self.brain:ForkThread(function() self:_WatchBuild(u, id, rec) end)
 end
 
 function M:_TickExp(u, id, now)
@@ -1317,7 +1672,6 @@ function M:_ExpWatcher()
                     local bid = _shortBpId(u)
                     if bid == string.lower(self.expState.bp) then
                         _ForkAttackUnit(self.brain, u, self.tasks.exp.attackFn, self.tasks.exp.attackData, self.tag)
-                        self:Dbg('EXP: build complete; handoff + start cooldown')
                         self.expState.active = false
                         self.expState.lastDoneAt = GetGameTimeSeconds and GetGameTimeSeconds() or 0
                         self.expState.bp, self.expState.pos, self.expState.builder = nil, nil, nil
@@ -1347,7 +1701,6 @@ function M:_ExpWatcher()
 end
 
 function M:TaskLoop()
-    self:Dbg('TaskLoop start')
     self:_InitTasking()
     self.brain:ForkThread(function() self:_ExpWatcher() end)
 
@@ -1356,7 +1709,8 @@ function M:TaskLoop()
         local all = self:_EnumerateEngineers()
         local assistTargets = self:_FindAssistTargets() or {}
         local assistCount = table.getn(assistTargets)
-        local buildDemand = table.getn(self.buildQueue or {})
+        local buildTasks = self:_BuildTasks()
+        local buildDemand = table.getn(buildTasks)
 
         local function computeExpDemand(ts)
             local ex = self.expState or {}
@@ -1428,7 +1782,6 @@ function M:TaskLoop()
                 if cur == 'IDLE' and (not filterFn or filterFn(rec)) then
                     self:_AssignEngineer(id, u, task)
                     moved = moved + 1
-                    if self.params.debug then self:Dbg(('Promote %s -> %s'):format(id, task)) end
                 end
             end
             if moved > 0 then recount() end
@@ -1452,6 +1805,16 @@ function M:TaskLoop()
 
         local totalEng = table.getn(all)
         local desired = { BUILD = 0, ASSIST = 0, EXP = 0 }
+        local taskCaps = { BUILD = buildDemand, ASSIST = assistCount, EXP = expDemand }
+        local eligibleExp = 0
+        if expDemand > 0 then
+            for _, rec in ipairs(all) do
+                if rec.tier == 'T3' or rec.tier == 'SCU' then
+                    eligibleExp = eligibleExp + 1
+                end
+            end
+            taskCaps.EXP = math.min(expDemand, eligibleExp)
+        end
 
         if severitySum > 0 and totalEng > 0 then
             local remaining = totalEng
@@ -1485,31 +1848,61 @@ function M:TaskLoop()
         if buildDemand <= 0 then desired.BUILD = 0 end
         if assistCount <= 0 then desired.ASSIST = 0 end
 
-        if expDemand > 0 then
-            local eligibleExp = 0
-            for _, rec in ipairs(all) do
-                if rec.tier == 'T3' or rec.tier == 'SCU' then
-                    eligibleExp = eligibleExp + 1
-                end
-            end
-            if eligibleExp > 0 then
-                desired.EXP = math.max(1, math.min(desired.EXP, expDemand, eligibleExp))
-            else
-                desired.EXP = 0
-            end
-        else
+        if taskCaps.EXP <= 0 then
             desired.EXP = 0
+        elseif eligibleExp > 0 then
+            desired.EXP = math.max(1, math.min(desired.EXP, taskCaps.EXP, eligibleExp))
         end
 
-        local allocatedAfterDemand = desired.BUILD + desired.ASSIST + desired.EXP
-        if allocatedAfterDemand > totalEng then
-            local excess = allocatedAfterDemand - totalEng
+        if taskCaps.BUILD > 0 then
+            desired.BUILD = math.min(desired.BUILD, taskCaps.BUILD)
+        end
+        if taskCaps.ASSIST > 0 then
+            desired.ASSIST = math.min(desired.ASSIST, taskCaps.ASSIST)
+        end
+
+        local allocatedAfterCap = desired.BUILD + desired.ASSIST + desired.EXP
+        if allocatedAfterCap > totalEng then
+            local excess = allocatedAfterCap - totalEng
             for idx = table.getn(severityList), 1, -1 do
                 if excess <= 0 then break end
                 local task = severityList[idx].task
                 local take = math.min(excess, desired[task])
                 desired[task] = desired[task] - take
                 excess = excess - take
+            end
+            allocatedAfterCap = desired.BUILD + desired.ASSIST + desired.EXP
+        end
+
+        local leftoverAfterCap = totalEng - allocatedAfterCap
+        if leftoverAfterCap > 0 then
+            local function fillCoverage()
+                local updated = false
+                for _, entry in ipairs(severityList) do
+                    local cap = taskCaps[entry.task] or 0
+                    if (entry.score or 0) > 0 and cap > 0 and desired[entry.task] < cap and leftoverAfterCap > 0 then
+                        desired[entry.task] = desired[entry.task] + 1
+                        leftoverAfterCap = leftoverAfterCap - 1
+                        updated = true
+                        if leftoverAfterCap <= 0 then break end
+                    end
+                end
+                return updated
+            end
+
+            while leftoverAfterCap > 0 and fillCoverage() do end
+
+            local idx = 1
+            while leftoverAfterCap > 0 and idx <= table.getn(severityList) do
+                local entry = severityList[idx]
+                if (entry.score or 0) > 0 then
+                    desired[entry.task] = desired[entry.task] + 1
+                    leftoverAfterCap = leftoverAfterCap - 1
+                else
+                    break
+                end
+                idx = idx + 1
+                if idx > table.getn(severityList) then idx = 1 end
             end
         end
 
@@ -1545,12 +1938,24 @@ function M:TaskLoop()
         end
 
         recount()
+
+        local buildAssignments = {}
+        if buildDemand > 0 then
+            local builders = {}
+            for _, rec in ipairs(all) do
+                if (self.engTask[rec.id] or 'IDLE') == 'BUILD' then
+                    table.insert(builders, rec)
+                end
+            end
+            buildAssignments = self:_PlanBuildAssignments(builders, buildTasks)
+        end
+
         local distrib = {}
         for _, rec in ipairs(all) do
             local id, u = rec.id, rec.u
             local t = self.engTask[id] or 'IDLE'
             if t == 'BUILD' then
-                self:_TickBuild(u, id, now)
+                self:_TickBuild(u, id, now, buildAssignments[id])
             elseif t == 'ASSIST' then
                 self:_TickAssist(u, id, now, assistTargets, distrib)
             elseif t == 'EXP' then
@@ -1569,11 +1974,9 @@ function M:TaskLoop()
 
         WaitSeconds(1)
     end
-    self:Dbg('TaskLoop end')
 end
 -- ===================== Threads =====================
 function M:MonitorLoop()
-    self:Dbg('MonitorLoop start')
     while not self.stopped do
         self:_SyncStructureDemand()
         local def = self:_ComputeDeficit()
@@ -1589,17 +1992,13 @@ function M:MonitorLoop()
         end
 
         self:_CollectorSweep()
-        self:_DebugHeadcount()
 
         if missing <= 0 and self.leaseId then
-            self.alloc:ReturnLease(self.leaseId)
-            self.leaseId = nil
-            self:Dbg('Monitor: satisfied -> lease returned')
+            self:_ReleaseLeaseLocal()
         end
 
         WaitSeconds(1)
     end
-    self:Dbg('MonitorLoop end')
 end
 
 function M:Start()
@@ -1614,8 +2013,7 @@ function M:Stop()
     if self.stopped then return end
     self.stopped = true
     if self.leaseId then
-        self.alloc:ReturnLease(self.leaseId)
-        self.leaseId = nil
+        self:_ReleaseLeaseLocal()
     end
     if self.monitorThread then
         KillThread(self.monitorThread)
@@ -1799,6 +2197,12 @@ function FactoryControl.New(base)
     return self
 end
 
+function FactoryControl:_Dbg(msg)
+    if self.base and self.base.Dbg then
+        self.base:Dbg(msg)
+    end
+end
+
 function FactoryControl:_RefreshFactoryRoster()
     local brain = self.brain
     if not brain or not brain.GetListOfUnits then return end
@@ -1818,6 +2222,15 @@ function FactoryControl:_RefreshFactoryRoster()
         end
         i = i + 1
     end
+end
+
+function FactoryControl:_FindLeaseOwner(entId)
+    for _, req in pairs(self.requests or {}) do
+        if req and req.granted and req.granted[entId] then
+            return req
+        end
+    end
+    return nil
 end
 
 function FactoryControl:_FactoryMatchesDomain(unit, domain)
@@ -2075,6 +2488,7 @@ function FactoryControl:RequestFactories(params)
         onUpdate    = params.onUpdate,
         onRevoke    = params.onRevoke,
         onComplete  = params.onComplete,
+        requesterTag= params.requesterTag,
         granted     = {},
         stallTimeout= params.stallTimeout,
         _idleSeconds= 0,
@@ -2109,12 +2523,22 @@ function FactoryControl:RequestFactories(params)
     table.insert(self.queue, id)
     self:SortQueue()
 
+    local requester = req.requesterTag or 'unknown'
+    self:_Dbg(('Factory lease request %d from %s (domain=%s want=%d radius=%s)'):format(
+        id,
+        requester,
+        tostring(req.domain),
+        req.want or 0,
+        tostring(req.radius)
+    ))
+
     return id
 end
 
 function FactoryControl:ReturnLease(leaseId, reason)
     local req = self.requests[leaseId]
     if not req then return end
+    local requester = req.requesterTag or 'unknown'
     local revoke = {}
     for entId, unit in pairs(req.granted) do
         local fs = self.factoryState[entId]
@@ -2123,6 +2547,11 @@ function FactoryControl:ReturnLease(leaseId, reason)
             fs.leaseId = nil
         end
         revoke[entId] = unit
+        self:_Dbg(('Factory %d returned from %s (reason=%s)'):format(
+            entId,
+            requester,
+            tostring(reason or 'complete')
+        ))
     end
     req.granted = {}
     if reason then
@@ -2182,6 +2611,10 @@ function FactoryControl:Tick()
         if (not unit) or unit:IsDead() or unit:GetAIBrain() ~= brain then
             if state.leased and state.leaseId then
                 local req = self.requests[state.leaseId]
+                -- Keep req.granted in sync immediately
+                if req and req.granted then
+                    req.granted[entId] = nil
+                end
                 if req and req.onRevoke then
                     pcall(req.onRevoke, { [entId] = unit }, state.leaseId, 'lost')
                 end
@@ -2228,7 +2661,37 @@ function FactoryControl:ServiceRequest(req)
                 state = { unit = fac, leased = false, leaseId = nil }
                 self.factoryState[entId] = state
             end
-            if not state.leased then
+
+            local owner = nil
+            if state.leaseId then
+                owner = self.requests[state.leaseId]
+                if not owner then
+                    state.leased = false
+                    state.leaseId = nil
+                end
+            end
+            if not owner then
+                owner = self:_FindLeaseOwner(entId)
+                if owner then
+                    state.leased = true
+                    state.leaseId = owner.id
+                end
+            end
+
+            if owner then
+                -- IMPORTANT: keep allocator state consistent.
+                -- If a factory is marked as owned by `owner`, ensure `owner.granted` also contains it.
+                owner.granted = owner.granted or {}
+                owner.granted[entId] = fac
+
+                -- Also ensure the currently serviced request sees its own grants (redundant but harmless)
+                if owner == req then
+                    req.granted[entId] = fac
+                end
+
+                state.leased = true
+                state.leaseId = owner.id
+            elseif not state.leased then
                 table.insert(candidates, fac)
             end
         end
@@ -2253,6 +2716,7 @@ function FactoryControl:ServiceRequest(req)
     if need <= 0 then return end
 
     local grantedNow = {}
+    local remainingUnleased = table.getn(candidates)
     local j = 1
     while j <= table.getn(candidates) and need > 0 do
         local fac = candidates[j]
@@ -2263,6 +2727,12 @@ function FactoryControl:ServiceRequest(req)
             state.leaseId = req.id
             req.granted[entId] = fac
             table.insert(grantedNow, fac)
+            remainingUnleased = remainingUnleased - 1
+            self:_Dbg(('Factory %d leased to %s; %d unleased remaining'):format(
+                entId,
+                req.requesterTag or 'unknown',
+                math.max(0, remainingUnleased)
+            ))
             need = need - 1
         end
         j = j + 1
@@ -2286,6 +2756,12 @@ end
 
 function Base:Warn(msg)
     WARN(('[Base:%s] %s'):format(self.tag or '??', msg))
+end
+
+function Base:Dbg(msg)
+    if self.params and self.params.debug then
+        self:Log(msg)
+    end
 end
 
 local function ResolveEngineerCounts(tbl, difficulty)
@@ -2368,8 +2844,165 @@ function Base:_SetupEngineerManager()
     end
 end
 
+function Base:_SetupMasterPlatoon()
+    self.masterPlatoonName = string.format('%s_Master', self.tag or 'Base')
+    self.masterPlatoon = _EnsureMasterPlatoon(self.brain, self.masterPlatoonName)
+    self.masterTracked = {}
+    self.masterInterval = self.params.masterInterval or 1.0
+    if self.masterThread then
+        KillThread(self.masterThread)
+        self.masterThread = nil
+    end
+    if self.brain and self.masterPlatoon then
+        self.masterThread = self.brain:ForkThread(function()
+            while self.masterThread do
+                self:_MasterPlatoonLoop()
+                WaitSeconds(self.masterInterval)
+            end
+        end)
+    end
+end
+
+function Base:_MasterPlatoonLoop()
+    local platoon = self.masterPlatoon
+    if not (platoon and self.brain and self.brain.PlatoonExists and self.brain:PlatoonExists(platoon)) then
+        self.masterPlatoon = _EnsureMasterPlatoon(self.brain, self.masterPlatoonName)
+        platoon = self.masterPlatoon
+        if not platoon then return end
+    end
+
+    self.masterTracked = self.masterTracked or {}
+    for id, u in pairs(self.masterTracked) do
+        if not (u and not u.Dead and u:GetAIBrain() == self.brain) then
+            self.masterTracked[id] = nil
+        end
+    end
+
+    for _, u in ipairs(platoon:GetPlatoonUnits() or {}) do
+        if u and not u.Dead and u:GetAIBrain() == self.brain then
+            self.masterTracked[u:GetEntityId()] = u
+        end
+    end
+
+    local near = {}
+    local seen = {}
+    local function addAround(pos, radius)
+        if not pos then return end
+        local around = self.brain:GetUnitsAroundPoint(categories.MOBILE, pos, radius, 'Ally') or {}
+        local i = 1
+        while i <= table.getn(around) do
+            local u = around[i]
+            if u and not seen[u] then
+                seen[u] = true
+                table.insert(near, u)
+            end
+            i = i + 1
+        end
+    end
+
+    if self.factoryControl and self.factoryControl.factoryState then
+        for _, state in pairs(self.factoryControl.factoryState) do
+            local f = state and state.unit
+            if f and not f:IsDead() and f:GetAIBrain() == self.brain then
+                addAround(f:GetPosition(), 35)
+            end
+        end
+    end
+
+    if self.basePos then
+        addAround(self.basePos, 35)
+    end
+
+    local k = 1
+    while k <= table.getn(near) do
+        local u = near[k]
+        if u and not u.Dead and isComplete(u) and u:GetAIBrain() == self.brain then
+            if not u.ub_tag and not EntityCategoryContains(categories.ENGINEER + categories.COMMAND, u) then
+                local id = u:GetEntityId()
+                if not self.masterTracked[id] then
+                    self.masterTracked[id] = u
+                    self.brain:AssignUnitsToPlatoon(platoon, { u }, 'Attack', 'GrowthFormation')
+                    self:Dbg(('MasterPlatoon: added unit id=%d bp=%s to %s')
+                        :format(id, _bpIdFromUnit(u) or 'unknown', self.masterPlatoonName or 'master'))
+                end
+            end
+        end
+        k = k + 1
+    end
+end
+
 function Base:GetFactoryControl()
     return self.factoryControl
+end
+
+function Base:GetMasterPlatoon()
+    if not (self.brain and self.masterPlatoonName) then return nil end
+    local platoon = self.masterPlatoon
+    if platoon and self.brain.PlatoonExists and self.brain:PlatoonExists(platoon) then
+        return platoon
+    end
+    self.masterPlatoon = _EnsureMasterPlatoon(self.brain, self.masterPlatoonName)
+    return self.masterPlatoon
+end
+
+function Base:RequestMasterUnits(requested, targetPlatoon, tag)
+    local mp = self:GetMasterPlatoon()
+    if not (mp and mp.GetPlatoonUnits and self.brain) then return {} end
+    if not (targetPlatoon and self.brain.PlatoonExists and self.brain:PlatoonExists(targetPlatoon)) then
+        return {}
+    end
+
+    local need = {}
+    local totalNeed = 0
+    for bp, count in pairs(requested or {}) do
+        if count and count > 0 then
+            local key = string.lower(bp)
+            need[key] = (need[key] or 0) + count
+            totalNeed = totalNeed + count
+        end
+    end
+    if totalNeed == 0 then return {} end
+
+    self:Dbg(('MasterPlatoon: request for %d units (%s)'):format(
+        totalNeed, table.concat((function()
+            local list = {}
+            for bp, count in pairs(need) do
+                table.insert(list, string.format('%s:%d', bp, count))
+            end
+            return list
+        end)(), ', ')
+    ))
+
+    local provided = {}
+    for _, u in ipairs(mp:GetPlatoonUnits() or {}) do
+        if u and not u.Dead and isComplete(u) and u:GetAIBrain() == self.brain then
+            if not u.ub_tag then
+                local bp = _bpIdFromUnit(u)
+                local want = bp and need[bp]
+                if want and want > 0 then
+                    if tag then
+                        u.ub_tag = tag
+                    end
+                    self.brain:AssignUnitsToPlatoon(targetPlatoon, {u}, 'Attack', 'GrowthFormation')
+                    need[bp] = want - 1
+                    table.insert(provided, u)
+                    totalNeed = totalNeed - 1
+                    if totalNeed <= 0 then
+                        break
+                    end
+                end
+            end
+        end
+    end
+
+    if table.getn(provided) > 0 then
+        self:Dbg(('MasterPlatoon: provided %d units to %s'):format(
+            table.getn(provided),
+            (targetPlatoon.GetPlatoonLabel and targetPlatoon:GetPlatoonLabel()) or 'platoon'
+        ))
+    end
+
+    return provided
 end
 
 function Base:RequestFactories(params)
@@ -2423,6 +3056,57 @@ function Base:AddBuildGroup(groupName)
     return 0
 end
 
+function Base:RemoveBuildGroup(groupName)
+    if not groupName then return 0 end
+    if self.engineers and self.engineers.RemoveBuildGroup then
+        return self.engineers:RemoveBuildGroup(groupName)
+    end
+    self.params.structGroups = self.params.structGroups or {}
+    local updated = {}
+    local removed = false
+    for _, name in ipairs(self.params.structGroups) do
+        if name ~= groupName then
+            table.insert(updated, name)
+        else
+            removed = true
+        end
+    end
+    if removed then
+        self.params.structGroups = updated
+        return 1
+    end
+    return 0
+end
+
+function Base:ReplaceBuildGroup(oldGroup, newGroup)
+    if not (oldGroup and newGroup) then return 0 end
+    if self.engineers and self.engineers.ReplaceBuildGroup then
+        return self.engineers:ReplaceBuildGroup(oldGroup, newGroup)
+    end
+    self.params.structGroups = self.params.structGroups or {}
+    local updated = {}
+    local removed = false
+    local seenNew = false
+    for _, name in ipairs(self.params.structGroups) do
+        if name == oldGroup then
+            removed = true
+        else
+            if name == newGroup then
+                seenNew = true
+            end
+            table.insert(updated, name)
+        end
+    end
+    if not seenNew then
+        table.insert(updated, newGroup)
+    end
+    if removed or not seenNew then
+        self.params.structGroups = updated
+        return 1
+    end
+    return 0
+end
+
 function Base:AssignEngineerUnit(unitOrPlatoon)
     if self.engineers and self.engineers.AssignEngineerUnits then
         return self.engineers:AssignEngineerUnits(unitOrPlatoon)
@@ -2459,6 +3143,13 @@ function Base:Stop()
         self.factoryControl:Shutdown()
         self.factoryControl = nil
     end
+    if self.masterThread then
+        KillThread(self.masterThread)
+        self.masterThread = nil
+    end
+    self.masterTracked = nil
+    self.masterPlatoon = nil
+    self.masterPlatoonName = nil
     if ScenarioInfo.BaseEngineerPlatoons and self.engineerPlatoonName then
         ScenarioInfo.BaseEngineerPlatoons[self.engineerPlatoonName] = nil
     end
@@ -2493,6 +3184,7 @@ local function NormalizeBaseParams(p)
         engineerFactoryPriority = p.engineerFactoryPriority,
         engineerFactoryCount    = p.engineerFactoryCount,
         factoryStallTimeout     = p.factoryStallTimeout,
+        masterInterval          = p.masterInterval,
     }
 end
 
@@ -2508,6 +3200,7 @@ local function BaseStart(params)
 
     base:_SetupFactoryControl()
     base:_SetupEngineerManager()
+    base:_SetupMasterPlatoon()
 
     ScenarioInfo.BaseManagers[base.tag] = base
     return base

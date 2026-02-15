@@ -5,6 +5,8 @@
 local ScenarioUtils = import('/lua/sim/ScenarioUtilities.lua')
 local ScenarioFramework = import('/lua/ScenarioFramework.lua')
 
+local OpStrings = import('/maps/faf_coop_U01.v0001/SingleMode/U01_Single_Strings.lua')
+
 --Spawn in Commanders
 function SpawnPlayerCommanders()
     if ScenarioInfo.Coop then
@@ -41,47 +43,117 @@ function AreaFromMarkers(areaName, markerA, markerB)
     return areaName
 end
 
--- Watch for PD Turrets
-local DTT = false
-function DetectTurretThread()
-    if not DTT then
-        DTT = true
-        ---------------------
-        --DIALOG: PD detected
-        ---------------------
-    end
+--Create Rect from Two Markers.
+function RectFromTwoMarkers(markerA, markerB)
+    local p1 = ScenarioUtils.MarkerToPosition(markerA)
+    local p2 = ScenarioUtils.MarkerToPosition(markerB)
+
+    local x0 = math.min(p1[1], p2[1])
+    local x1 = math.max(p1[1], p2[1])
+    local z0 = math.min(p1[3], p2[3])
+    local z1 = math.max(p1[3], p2[3])
+
+    return Rect(x0, z0, x1, z1)
 end
 
--- Watch for Air Units
-local DAT = false
-function DetectAirThread()
-    if not DAT then
-        DAT = true
-        ----------------------
-        --DIALOG: Air Detected
-        ----------------------
+--Check for destroyed units.
+function AreaAmountDestroyed(brain, rect, fraction, cats)
 
-        ScenarioFramework.RemoveRestrictionForAllHumans(categories.ueb0102 + categories.uea0102 + categories.uea0101)
+    local function CountAlive()
+        local units = GetUnitsInRect(rect) or {}
+        local army = brain:GetArmyIndex()
+        local count = 0
+
+        for _, u in units do
+            if u and (not u.Dead) and (u:GetArmy() == army) and EntityCategoryContains(cats, u) then
+                count = count + 1
+            end
+        end
+
+        return count
     end
-end
 
-function CybranAgentDestroyed()
-    ------------------
-    --DIALOG: Good job
-    ------------------
+    local total = CountAlive()
+    local threshold = total * fraction
+
+    while true do
+        WaitSeconds(0.5)
+
+        local alive = CountAlive()
+        local diff = total - alive
+
+        if diff >= threshold then
+            return true
+        end
+    end
 end
 
 ------------------------------------------
 --Failure Functions------------------------
 ------------------------------------------
-function ComsDestroyed()
-    LOG('Communication Center Destroyed. Mission Failed!')
+function ComsDestroyed(Target, NoComs)
+    ForkThread(function()
+        LockInput()
+    
+        ScenarioFramework.FlushDialogueQueue()
+        ScenarioFramework.PauseUnitDeath(target)
+        ScenarioFramework.CDRDeathNISCamera(target)
+        
+        if not NoComs then
+            ScenarioFramework.Dialogue(OpStrings.OpComsDeath, function()
+                OperationFailed()
+            end, true, nil)
+        else
+            WaitSeconds(3)
+            OperationFailed()
+        end
+    end)
 end
 
-function Player1Kill()
-    LOG('Player 1 Commander Destroyed. Mission Failed!')
+function CommanderDestroyed(commander, NoComs)
+    ForkThread(function()
+        LockInput()
+
+        ScenarioFramework.FlushDialogueQueue()
+
+        if not NoComs then ScenarioFramework.Dialogue(OpStrings.OpDeath, nil, true, nil) end
+        ScenarioFramework.CDRDeathNISCamera(commander)
+        WaitSeconds(3)
+        OperationFailed()
+    end)
 end
 
-function Player2Kill()
-    LOG('Player 2 Commander Destroyed. Mission Failed!')
+--------------------------------------------
+--End Game Functions------------------------
+--------------------------------------------
+function OperationFailed()
+    ForkThread(function()
+        LOG('Operation Ended!')
+
+        for _, o in ScenarioInfo.AssignedObjectives do
+            if (o and o.Active) then
+                o:ManualResult(false)
+            end
+        end
+
+        WaitSeconds(1)
+        UnlockInput()
+        ScenarioFramework.EndOperation(false, true, true)
+    end)
+end
+
+function OperationComplete()
+    ForkThread(function()
+        LOG('Operation Complete!')
+
+        for _, o in ScenarioInfo.AssignedObjectives do
+            if (o and o.Active) then
+                o:ManualResult(false)
+            end
+        end
+
+        WaitSeconds(1)
+        UnlockInput()
+        ScenarioFramework.EndOperation(true, true, true)
+    end)
 end
