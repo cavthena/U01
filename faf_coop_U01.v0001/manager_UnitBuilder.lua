@@ -991,6 +991,7 @@ function Builder:OnLeaseGranted(factories, leaseId)
     local rpos = getRallyPos(self.params)
     for _, f in ipairs(factories) do
         self.leased[f:GetEntityId()] = f
+        self:_EnsureFactoryCallbacks(f)
         IssueClearFactoryCommands({f})
         setFactoryRally(f, rpos)
     end
@@ -1008,6 +1009,7 @@ function Builder:OnLeaseUpdated(factories, leaseId)
     for _, f in ipairs(factories) do
         if f and not f.Dead then
             self.leased[f:GetEntityId()] = f
+            self:_EnsureFactoryCallbacks(f)
             IssueClearFactoryCommands({f})
             setFactoryRally(f, rpos)
         end
@@ -1127,10 +1129,91 @@ function Builder:CollectorLoop()
         if facCount == 0 then
             self:_WaitForLeaseGrant(3, 0.5)
             WaitSeconds(0.5)
+        elseif self._buildEventPending then
+            self._buildEventPending = false
+            WaitSeconds(0.2)
         else
             WaitSeconds(1)
         end
     end
+end
+
+function Builder:_TryClaimBuiltUnit(unit)
+    if not (unit and not unit.Dead and isComplete(unit) and unit:GetAIBrain() == self.brain) then
+        return false
+    end
+    if not (self.stagingPlatoon and self.brain and self.brain.PlatoonExists and self.brain:PlatoonExists(self.stagingPlatoon)) then
+        return false
+    end
+
+    local bp = unitBpId(unit)
+    if not (bp and self.wanted and self.wanted[bp]) then
+        return false
+    end
+    if unit.ub_tag and unit.ub_tag ~= self.tag then
+        return false
+    end
+
+    local haveTbl = countCompleteByBp(self.stagingPlatoon:GetPlatoonUnits() or {}, self.tag)
+    local have = haveTbl[bp] or 0
+    local want = self.wanted[bp] or 0
+    if have >= want then
+        return false
+    end
+
+    local id = unit:GetEntityId()
+    self.stagingSet = self.stagingSet or {}
+    self.stagingSet[id] = unit
+    unit.ub_tag = self.tag
+    self.brain:AssignUnitsToPlatoon(self.stagingPlatoon, {unit}, 'Attack', 'GrowthFormation')
+
+    local q = self.inProd and self.inProd[bp] or 0
+    if q > 0 then
+        self.inProd[bp] = q - 1
+    end
+    return true
+end
+
+function Builder:_OnFactoryStopBuild(factory, maybeBuiltUnit)
+    if self.stopped then return end
+    self._buildEventPending = true
+    self:EnsureFactoryQuota()
+
+    local built = maybeBuiltUnit
+    if built and type(built) ~= 'userdata' and type(built) ~= 'table' then
+        built = nil
+    end
+    if built and built.GetEntityId then
+        self:_TryClaimBuiltUnit(built)
+    end
+
+    if self.stagingPlatoon then
+        local haveTbl = countCompleteByBp(self.stagingPlatoon:GetPlatoonUnits() or {}, self.tag)
+        self:SanitizeInProd(haveTbl)
+        self:QueueNeededBuilds(haveTbl)
+    end
+end
+
+function Builder:_EnsureFactoryCallbacks(factory)
+    if not (factory and not factory.Dead and factory.AddUnitCallback and factory.GetEntityId) then
+        return
+    end
+    self.factoryCallbackInstalled = self.factoryCallbackInstalled or {}
+    local id = factory:GetEntityId()
+    if self.factoryCallbackInstalled[id] then
+        return
+    end
+
+    factory:AddUnitCallback(function(f, builtUnit)
+        self:_OnFactoryStopBuild(f, builtUnit)
+    end, 'OnStopBuild')
+
+    -- Also pulse when a queued build fails/cancels so deficits are requeued quickly.
+    factory:AddUnitCallback(function(f, builtUnit)
+        self:_OnFactoryStopBuild(f, builtUnit)
+    end, 'OnFailedToBuild')
+
+    self.factoryCallbackInstalled[id] = true
 end
 
 function Builder:MonitorLoop()
@@ -1775,6 +1858,8 @@ function Start(params)
 
     o.basePos = ScenarioUtils.MarkerToPosition(o.params.baseMarker) or o.base.basePos
     o.handedOff = {}
+    o.factoryCallbackInstalled = {}
+    o._buildEventPending = false
     o.stopped = false
     if not o.basePos then error('Invalid baseMarker: '.. tostring(params.baseMarker)) end
     o.stopped = false

@@ -2469,6 +2469,19 @@ local function IssuePatrolRoute(platoon, points, formation)
     IssuePatrol(units, points[1])
 end
 
+local function BuildLoopRoute(points)
+    local route = {}
+    for _, point in ipairs(points or {}) do
+        table_insert(route, point)
+    end
+
+    if table_getn(route) > 1 then
+        table_insert(route, route[1])
+    end
+
+    return route
+end
+
 local function BuildPerimeterPoints(layer, basePos, distance)
     local points = {}
     local count = 6
@@ -2747,10 +2760,36 @@ function AreaPatrol(platoon, data)
         route = BuildPingPongRoute(points)
     end
 
-    IssuePatrolRoute(platoon, route, opts.Formation)
+    local useFormationMoves = layer ~= 'Air' and opts.Formation and opts.Formation ~= 'NoFormation'
+    if useFormationMoves then
+        local loopRoute = BuildLoopRoute(route)
+        local arrivalRadiusSq = 20 * 20
+        local maxTravelSeconds = 120
 
-    while PlatoonAlive(platoon) do
-        SafeWait(RecheckDelay)
+        while PlatoonAlive(platoon) do
+            MoveAlongPath(platoon, loopRoute, opts.Formation, false)
+
+            local destination = loopRoute[table_getn(loopRoute)]
+            local elapsed = 0
+            while PlatoonAlive(platoon) do
+                local pos = GetPlatoonPosition(platoon)
+                if pos and destination and DistanceSq(pos, destination) <= arrivalRadiusSq then
+                    break
+                end
+
+                elapsed = elapsed + 1
+                if elapsed >= maxTravelSeconds then
+                    break
+                end
+                SafeWait(1)
+            end
+        end
+    else
+        IssuePatrolRoute(platoon, route, opts.Formation)
+
+        while PlatoonAlive(platoon) do
+            SafeWait(RecheckDelay)
+        end
     end
 end
 
