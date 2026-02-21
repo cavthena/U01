@@ -27,8 +27,8 @@ local Difficulty = ScenarioInfo.Options.Difficulty
 
 --Debug
 local Debug = true
-local DbgFog = true
-local DbgSpeed = true
+local DbgFog = false
+local DbgSpeed = false
 local NoComs = false
 local SkipNIS = false
 
@@ -253,3 +253,4 @@ function MissionHandOff()
         end
     end
 end
+
