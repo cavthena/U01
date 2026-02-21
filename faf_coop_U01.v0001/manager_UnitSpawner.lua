@@ -1,5 +1,6 @@
--- Created by Ruanuku/Cavthena
--- AI Unit Spawner (direct spawn, wave, loss-gated & wave-count modes)
+--================================================================================
+-- Unit Spawner Manager -- Created by Cavthena
+--================================================================================
 --
 -- What it does
 --   • Spawns a platoon at a given marker using a composition { {bp, {e,n,h}, [label], [waveStart]}, ... }

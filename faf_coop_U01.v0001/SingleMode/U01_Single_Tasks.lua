@@ -1,10 +1,10 @@
 -- ========================================OBJECTIVES====================================
 -- Objectives created for faf_coop_U01.v0001
--- Created by Ruanuku/Cavthena
+-- Created by Cavthena
 
 local ScenarioUtils = import('/lua/sim/ScenarioUtilities.lua')
 local Objectives = import('/lua/ScenarioFramework.lua').Objectives
-local OpStrings = import('/maps/faf_coop_U01.v0001/SingleMode/U01_Single_Strings.lua')
+local OpStrings = import('/maps/faf_coop_U01.v0001/U01_Strings.lua')
 local ExtraFunc = import('/maps/faf_coop_U01.v0001/faf_coop_U01_ExtraFunc.lua')
 
 local Difficulty = ScenarioInfo.Options.Difficulty

@@ -15,7 +15,7 @@ local Utilities = import('/lua/utilities.lua')
 local ScenarioFramework = import('/lua/ScenarioFramework.lua')
 local ExtraFunc = import('/maps/faf_coop_U01.v0001/faf_coop_U01_ExtraFunc.lua')
 local Cinematics = import('/lua/cinematics.lua')
-local OpStrings = import('/maps/faf_coop_U01.v0001/SingleMode/U01_Single_Strings.lua')
+local OpStrings = import('/maps/faf_coop_U01.v0001/U01_Strings.lua')
 
 local AIBuffs = import('/maps/faf_coop_U01.v0001/Ruan_AIBuff.lua')
 
@@ -33,6 +33,7 @@ local NoComs = false
 local SkipNIS = false
 
 local NIS1InitialDelay = 3
+local intelMarker = {}
 
 --------------------------------------------------
 --Main Thread: Timetable--------------------------
@@ -131,9 +132,9 @@ function OnStart(scenario)
         'Teleporter'
     })
 
-    --if not SkipNIS then
-        --ScenarioFramework.CreateTimerTrigger(OpenCinematic, NIS1InitialDelay)
-    --else
+    if not SkipNIS then
+        ScenarioFramework.CreateTimerTrigger(OpenCinematicStep1, 1)
+    else
         if ScenarioInfo.Coop then
             --COOPMODE.CoopModeCatch(Debug, NoComs, SkipNIS)
         else
@@ -145,48 +146,110 @@ function OnStart(scenario)
                 MODEHARD.HardModeCatch(Debug, NoComs, SkipNIS)
             end
         end
-    --end
+    end
 end
 
-function OpenCinematic()
-    local intelMarker = {}
-
+function OpenCinematicStep1()
     Cinematics.EnterNISMode()
-    Cinematics.CameraSetZoom(0, 0)
 
     local function ValleyPan()
-        Cinematics.CameraSetZoom(144, 0)
-        Cinematics.CameraMoveToMarker('CS_01', 0)
-
+        intelMarker[1] = ScenarioFramework.CreateVisibleAreaLocation(48, 'Reveal_01', 0, ArmyBrains[ScenarioInfo.Player1])
+        intelMarker[2] = ScenarioFramework.CreateVisibleAreaLocation(48, 'Reveal_02', 0, ArmyBrains[ScenarioInfo.Player1])
         if ScenarioInfo.Coop then
-            intelMarker[1] = ScenarioFramework.CreateVisibleAreaLocation(48, 'Reveal_01', 0, ArmyBrains[ScenarioInfo.Player1])
-            intelMarker[2] = ScenarioFramework.CreateVisibleAreaLocation(48, 'Reveal_02', 0, ArmyBrains[ScenarioInfo.Player1])
             intelMarker[3] = ScenarioFramework.CreateVisibleAreaLocation(48, 'Reveal_01', 0, ArmyBrains[ScenarioInfo.Player2])
             intelMarker[4] = ScenarioFramework.CreateVisibleAreaLocation(48, 'Reveal_02', 0, ArmyBrains[ScenarioInfo.Player2])
-        else
-            intelMarker[1] = ScenarioFramework.CreateVisibleAreaLocation(48, 'Reveal_01', 0, ArmyBrains[ScenarioInfo.Player1])
-            intelMarker[2] = ScenarioFramework.CreateVisibleAreaLocation(48, 'Reveal_02', 0, ArmyBrains[ScenarioInfo.Player1])
         end
 
-        ScenarioFramework.Dialogue(OpStrings.Brief2, MissionHandOff, true, nil)
-        Cinematics.CameraMoveToMarker('CS_02', 15)
+        ScenarioFramework.Dialogue(OpStrings.Cinema2, OpenCinematicStep2, true, nil)
+        Cinematics.CameraSetZoom(100, 0)
+        Cinematics.CameraMoveToMarker('CS_02', 10)
     end
 
-    ScenarioFramework.Dialogue(OpStrings.Brief1, ValleyPan, true, nil)
+    Cinematics.CameraMoveToMarker('CS_01', 0)
+    Cinematics.CameraSetZoom(1, 0)
+
+    ScenarioFramework.CreateTimerTrigger(function()
+        ScenarioFramework.Dialogue(OpStrings.Cinema1, ValleyPan, true, nil)
+    end, NIS1InitialDelay)
+    Cinematics.CameraSetZoom(100, 15)
+end
+
+function OpenCinematicStep2()
+    ScenarioUtils.CreateArmyGroup('UEFOutpost', 'UEF_ComsBase_Objectives')
+    ScenarioUtils.CreateArmyGroup('UEFOutpost', 'UEF_ComsBase_Def_D'.. Difficulty)
+    ScenarioUtils.CreateArmyGroup('UEFOutpost', 'UEF_ComsBase_Main')
+
+    intelMarker[5] = ScenarioFramework.CreateVisibleAreaLocation(48, 'Reveal_03', 0, ArmyBrains[ScenarioInfo.Player1])
+    if ScenarioInfo.Coop then
+        intelMarker[6] = ScenarioFramework.CreateVisibleAreaLocation(48, 'Reveal_03', 0, ArmyBrains[ScenarioInfo.Player2])
+    end
+
+    ScenarioFramework.Dialogue(OpStrings.Cinema3, OpenCinematicStep3, true, nil)
+    Cinematics.CameraMoveToMarker('CS_03', 5)
+    Cinematics.CameraSpinAndZoom(0.02, 0, 0)
+end
+
+function OpenCinematicStep3()
+    local pos = ScenarioUtils.MarkerToPosition('CS_MoveOrder')
+    local units = ScenarioUtils.CreateArmyGroup('Cybran', 'CS_PlatoonMoving')
+    IssueFormMove(units, pos, 'AttackFormation', 1)
+
+    intelMarker[7] = ScenarioFramework.CreateVisibleAreaLocation(48, 'Reveal_04', 0, ArmyBrains[ScenarioInfo.Player1])
+    intelMarker[8] = ScenarioFramework.CreateVisibleAreaLocation(48, 'Reveal_05', 0, ArmyBrains[ScenarioInfo.Player1])
+    if ScenarioInfo.Coop then
+        intelMarker[9] = ScenarioFramework.CreateVisibleAreaLocation(48, 'Reveal_04', 0, ArmyBrains[ScenarioInfo.Player2])
+        intelMarker[10] = ScenarioFramework.CreateVisibleAreaLocation(48, 'Reveal_05', 0, ArmyBrains[ScenarioInfo.Player2])
+    end
+
+    Cinematics.CameraMoveToMarker('CS_04', 3)
+    Cinematics.CameraTrackEntities(units,  40, 0)
+
+    ScenarioFramework.Dialogue(OpStrings.Cinema4, MissionHandOff, true, nil)
 end
 
 function MissionHandOff()
-    Cinematics.ExitNISMode()
+    local function Handoff()
+        Cinematics.ExitNISMode()
 
-    if ScenarioInfo.Coop then
-        --COOPMODE.CoopModeCatch(Debug, NoComs, SkipNIS)
-    else
-        if Difficulty == 1 then
-            MODEEASY.EasyModeCatch(Debug, NoComs, SkipNIS)
-        elseif Difficulty == 2 then
-            MODEMED.MediumModeCatch(Debug, NoComs, SkipNIS)
+        if ScenarioInfo.Coop then
+            --COOPMODE.CoopModeCatch(Debug, NoComs, SkipNIS)
         else
-            MODEHARD.HardModeCatch(Debug, NoComs, SkipNIS)
+            if Difficulty == 1 then
+                MODEEASY.EasyModeCatch(Debug, NoComs, SkipNIS)
+            elseif Difficulty == 2 then
+                MODEMED.MediumModeCatch(Debug, NoComs, SkipNIS)
+            else
+                MODEHARD.HardModeCatch(Debug, NoComs, SkipNIS)
+            end
+        end
+    end
+
+    ScenarioFramework.Dialogue(OpStrings.Cinema5, Handoff, true, nil)
+    Cinematics.CameraMoveToMarker('CS_02', 5)
+
+    --Cinematics.CameraReset()
+    for i, m in ipairs(intelMarker) do
+        if m and not m.Dead then
+            local pos = m:GetPosition()
+            m:Destroy()
+            ScenarioFramework.ClearIntel(pos, 48)
+            intelMarker[i] = nil
+        end
+    end
+
+    local brain = ArmyBrains[ScenarioInfo.Cybran]
+    local units = brain:GetListOfUnits(categories.ALLUNITS, false, false) or {}
+    for _, u in pairs(units) do
+        if u and not u.Dead then
+            u:Destroy()
+        end
+    end
+    
+    brain = ArmyBrains[ScenarioInfo.UEFOutpost]
+    units = brain:GetListOfUnits(categories.ALLUNITS, false, false) or {}
+    for _, u in pairs(units) do
+        if u and not u.Dead then
+            u:Destroy()
         end
     end
 end

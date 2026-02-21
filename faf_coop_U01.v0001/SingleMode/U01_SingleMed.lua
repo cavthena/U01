@@ -23,7 +23,7 @@ local Cinematics = import('/lua/cinematics.lua')
 local Triggers = import('/lua/scenariotriggers.lua')
 
 local Tasks = import('/maps/faf_coop_U01.v0001/SingleMode/U01_Single_Tasks.lua')
-local OpStrings = import('/maps/faf_coop_U01.v0001/SingleMode/U01_Single_Strings.lua')
+local OpStrings = import('/maps/faf_coop_U01.v0001/U01_Strings.lua')
 local AIBuffs = import('/maps/faf_coop_U01.v0001/Ruan_AIBuff.lua')
 local ExtraFunc = import('/maps/faf_coop_U01.v0001/faf_coop_U01_ExtraFunc.lua')
 
@@ -255,13 +255,15 @@ function Ob4_Med()
     Ob4_CaptureTarget:SetReclaimable(false)
 
     ScenarioFramework.CreateUnitDamagedTrigger(function()
-        ExtraFunc.ComsDestroyed(Ob4_CaptureTarget, NoComs)
-    end, Ob4_CaptureTarget, 0.99)
-    ScenarioFramework.CreateUnitDamagedTrigger(function()
-        if not NoComs then ScenarioFramework.Dialogue(OpStrings.Info4_2, nil, false, nil) end
-    end, Ob4_CaptureTarget, 0.5)
-    ScenarioFramework.CreateUnitDamagedTrigger(function()
         if not NoComs then ScenarioFramework.Dialogue(OpStrings.Info4_1, nil, false, nil) end
+
+        ScenarioFramework.CreateUnitDamagedTrigger(function()
+            if not NoComs then ScenarioFramework.Dialogue(OpStrings.Info4_2, nil, false, nil) end
+
+            ScenarioFramework.CreateUnitDamagedTrigger(function()
+                ExtraFunc.ComsDestroyed(Ob4_CaptureTarget, NoComs)
+            end, Ob4_CaptureTarget, 0.99)
+        end, Ob4_CaptureTarget, 0.5)
     end, Ob4_CaptureTarget, -1)
 
     ScenarioUtils.CreateArmyGroup('UEFOutpost', 'UEF_ComsBase_Def_D'.. Difficulty)
@@ -316,14 +318,16 @@ function Ob4a_Med(captured)
     captured:SetReclaimable(false)
 
     ScenarioFramework.CreateUnitDamagedTrigger(function()
-        ExtraFunc.ComsDestroyed(captured, NoComs)
-    end, captured, 0.99)
-    ScenarioFramework.CreateUnitDamagedTrigger(function()
-        if not NoComs then ScenarioFramework.Dialogue(OpStrings.Info4_2, nil, false, nil) end
-    end, captured, 0.5)
-    ScenarioFramework.CreateUnitDamagedTrigger(function()
         if not NoComs then ScenarioFramework.Dialogue(OpStrings.Info4_1, nil, false, nil) end
-    end, captured, -1)
+
+        ScenarioFramework.CreateUnitDamagedTrigger(function()
+            if not NoComs then ScenarioFramework.Dialogue(OpStrings.Info4_2, nil, false, nil) end
+
+            ScenarioFramework.CreateUnitDamagedTrigger(function()
+                ExtraFunc.ComsDestroyed(Ob4_CaptureTarget, NoComs)
+            end, Ob4_CaptureTarget, 0.99)
+        end, Ob4_CaptureTarget, 0.5)
+    end, Ob4_CaptureTarget, -1)
 
     Tasks.Objective_4a(captured)
 

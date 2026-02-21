@@ -1,12 +1,12 @@
 -- ================================EXTRA FUNCTIONS=================================
 -- For use in faf_coop_U01.v0001
---Created by Ruanuku/Cavthena
+--Created by Cavthena
 
 local ScenarioUtils = import('/lua/sim/ScenarioUtilities.lua')
 local ScenarioFramework = import('/lua/ScenarioFramework.lua')
 local Cinematics = import('/lua/cinematics.lua')
 
-local OpStrings = import('/maps/faf_coop_U01.v0001/SingleMode/U01_Single_Strings.lua')
+local OpStrings = import('/maps/faf_coop_U01.v0001/U01_Strings.lua')
 
 --Spawn in Commanders
 function SpawnPlayerCommanders()

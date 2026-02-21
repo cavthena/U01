@@ -23,7 +23,7 @@ local Cinematics = import('/lua/cinematics.lua')
 local Triggers = import('/lua/scenariotriggers.lua')
 
 local Tasks = import('/maps/faf_coop_U01.v0001/SingleMode/U01_Single_Tasks.lua')
-local OpStrings = import('/maps/faf_coop_U01.v0001/SingleMode/U01_Single_Strings.lua')
+local OpStrings = import('/maps/faf_coop_U01.v0001/U01_Strings.lua')
 local AIBuffs = import('/maps/faf_coop_U01.v0001/Ruan_AIBuff.lua')
 local ExtraFunc = import('/maps/faf_coop_U01.v0001/faf_coop_U01_ExtraFunc.lua')
 
@@ -97,6 +97,10 @@ function Ob1_Hard()
                 ScenarioFramework.Dialogue(OpStrings.Main1_2, nil, true, nil)
                 Ob2Handoff()
             else
+                if advancetrigger then
+                    KillThread(advancetrigger)
+                end
+
                 Ob2Handoff()
             end
         end)
