@@ -1,5 +1,5 @@
 -- ================================EXTRA FUNCTIONS=================================
--- For use in faf_coop_U01.v0001
+-- For use in faf_coop_U01
 --Created by Cavthena
 
 local ScenarioUtils = import('/lua/sim/ScenarioUtilities.lua')

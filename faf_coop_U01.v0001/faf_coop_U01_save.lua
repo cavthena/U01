@@ -25,7 +25,7 @@ Scenario = {
             ['rectangle'] = RECTANGLE( 215, 336, 402, 494 ),
         },
         ['AREA_3'] = {
-            ['rectangle'] = RECTANGLE( 116, 256, 402, 494 ),
+            ['rectangle'] = RECTANGLE( 116, 253, 402, 494 ),
         },
         ['AREA_1'] = {
             ['rectangle'] = RECTANGLE( 116, 416, 402, 494 ),
@@ -59,7 +59,7 @@ Scenario = {
                     ['canSetCamera'] = BOOLEAN( true ),
                     ['canSyncCamera'] = BOOLEAN( true ),
                     ['orientation'] = VECTOR3( -3.960406, 0.828792, 0 ),
-                    ['position'] = VECTOR3( 342.5, 38.00233, 299.4999 ),
+                    ['position'] = VECTOR3( 342.5, 38.00232, 299.4999 ),
                 },
                 ['LandPN34'] = {
                     ['color'] = STRING( 'ff00ff00' ),
@@ -282,17 +282,7 @@ Scenario = {
                     ['type'] = STRING( 'Amphibious Path Node' ),
                     ['prop'] = STRING( '/env/common/props/markers/M_Blank_prop.bp' ),
                     ['orientation'] = VECTOR3( 0, 0, 0 ),
-                    ['position'] = VECTOR3( 287.5, 33.77941, 213.5 ),
-                },
-                ['LandPN03'] = {
-                    ['color'] = STRING( 'ff00ff00' ),
-                    ['hint'] = BOOLEAN( true ),
-                    ['graph'] = STRING( 'DefaultLand' ),
-                    ['adjacentTo'] = STRING( '' ),
-                    ['type'] = STRING( 'Land Path Node' ),
-                    ['prop'] = STRING( '/env/common/props/markers/M_Blank_prop.bp' ),
-                    ['orientation'] = VECTOR3( 0, 0, 0 ),
-                    ['position'] = VECTOR3( 287.5, 41.63535, 416.5 ),
+                    ['position'] = VECTOR3( 287.5, 33.7794, 213.5 ),
                 },
                 ['LandPN61'] = {
                     ['color'] = STRING( 'ff00ff00' ),
@@ -304,7 +294,27 @@ Scenario = {
                     ['orientation'] = VECTOR3( 0, 0, 0 ),
                     ['position'] = VECTOR3( 287.5, 34.10365, 208.5 ),
                 },
-                ['Mass 13'] = {
+                ['LandPN28'] = {
+                    ['color'] = STRING( 'ff00ff00' ),
+                    ['hint'] = BOOLEAN( true ),
+                    ['graph'] = STRING( 'DefaultLand' ),
+                    ['adjacentTo'] = STRING( '' ),
+                    ['type'] = STRING( 'Land Path Node' ),
+                    ['prop'] = STRING( '/env/common/props/markers/M_Blank_prop.bp' ),
+                    ['orientation'] = VECTOR3( 0, 0, 0 ),
+                    ['position'] = VECTOR3( 208.5, 42.00647, 399.5 ),
+                },
+                ['LandPN45'] = {
+                    ['color'] = STRING( 'ff00ff00' ),
+                    ['hint'] = BOOLEAN( true ),
+                    ['graph'] = STRING( 'DefaultLand' ),
+                    ['adjacentTo'] = STRING( '' ),
+                    ['type'] = STRING( 'Land Path Node' ),
+                    ['prop'] = STRING( '/env/common/props/markers/M_Blank_prop.bp' ),
+                    ['orientation'] = VECTOR3( 0, 0, 0 ),
+                    ['position'] = VECTOR3( 128.5, 34.83025, 255.5 ),
+                },
+                ['Mass 05'] = {
                     ['size'] = FLOAT( 1.000000 ),
                     ['resource'] = BOOLEAN( true ),
                     ['amount'] = FLOAT( 100.000000 ),
@@ -313,17 +323,7 @@ Scenario = {
                     ['type'] = STRING( 'Mass' ),
                     ['prop'] = STRING( '/env/common/props/markers/M_Blank_prop.bp' ),
                     ['orientation'] = VECTOR3( 0, 0, 0 ),
-                    ['position'] = VECTOR3( 155.5, 32.00195, 228.5 ),
-                },
-                ['LandPN33'] = {
-                    ['color'] = STRING( 'ff00ff00' ),
-                    ['hint'] = BOOLEAN( true ),
-                    ['graph'] = STRING( 'DefaultLand' ),
-                    ['adjacentTo'] = STRING( '' ),
-                    ['type'] = STRING( 'Land Path Node' ),
-                    ['prop'] = STRING( '/env/common/props/markers/M_Blank_prop.bp' ),
-                    ['orientation'] = VECTOR3( 0, 0, 0 ),
-                    ['position'] = VECTOR3( 271.5, 38.01013, 319.5 ),
+                    ['position'] = VECTOR3( 263.5, 38.00232, 355.5 ),
                 },
                 ['LandPN05'] = {
                     ['color'] = STRING( 'ff00ff00' ),
@@ -335,12 +335,15 @@ Scenario = {
                     ['orientation'] = VECTOR3( 0, 0, 0 ),
                     ['position'] = VECTOR3( 304.5, 38.75627, 479.5 ),
                 },
-                ['Reveal_03'] = {
-                    ['color'] = STRING( 'ff800080' ),
-                    ['type'] = STRING( 'Blank Marker' ),
+                ['LandPN03'] = {
+                    ['color'] = STRING( 'ff00ff00' ),
+                    ['hint'] = BOOLEAN( true ),
+                    ['graph'] = STRING( 'DefaultLand' ),
+                    ['adjacentTo'] = STRING( '' ),
+                    ['type'] = STRING( 'Land Path Node' ),
                     ['prop'] = STRING( '/env/common/props/markers/M_Blank_prop.bp' ),
                     ['orientation'] = VECTOR3( 0, 0, 0 ),
-                    ['position'] = VECTOR3( 343.5, 38.00232, 299.5 ),
+                    ['position'] = VECTOR3( 287.5, 41.63535, 416.5 ),
                 },
                 ['LandPN46'] = {
                     ['color'] = STRING( 'ff00ff00' ),
@@ -362,7 +365,7 @@ Scenario = {
                     ['orientation'] = VECTOR3( 0, 0, 0 ),
                     ['position'] = VECTOR3( 80.5, 38.84222, 432.5 ),
                 },
-                ['LandPN28'] = {
+                ['LandPN20'] = {
                     ['color'] = STRING( 'ff00ff00' ),
                     ['hint'] = BOOLEAN( true ),
                     ['graph'] = STRING( 'DefaultLand' ),
@@ -370,7 +373,7 @@ Scenario = {
                     ['type'] = STRING( 'Land Path Node' ),
                     ['prop'] = STRING( '/env/common/props/markers/M_Blank_prop.bp' ),
                     ['orientation'] = VECTOR3( 0, 0, 0 ),
-                    ['position'] = VECTOR3( 208.5, 42.00647, 399.5 ),
+                    ['position'] = VECTOR3( 383.5, 40.15869, 399.5 ),
                 },
                 ['LandPN39'] = {
                     ['color'] = STRING( 'ff00ff00' ),
@@ -382,15 +385,16 @@ Scenario = {
                     ['orientation'] = VECTOR3( 0, 0, 0 ),
                     ['position'] = VECTOR3( 367.5, 40.03369, 272.5 ),
                 },
-                ['LandPN45'] = {
-                    ['color'] = STRING( 'ff00ff00' ),
-                    ['hint'] = BOOLEAN( true ),
-                    ['graph'] = STRING( 'DefaultLand' ),
-                    ['adjacentTo'] = STRING( '' ),
-                    ['type'] = STRING( 'Land Path Node' ),
+                ['Mass 13'] = {
+                    ['size'] = FLOAT( 1.000000 ),
+                    ['resource'] = BOOLEAN( true ),
+                    ['amount'] = FLOAT( 100.000000 ),
+                    ['color'] = STRING( 'ff808080' ),
+                    ['editorIcon'] = STRING( '' ),
+                    ['type'] = STRING( 'Mass' ),
                     ['prop'] = STRING( '/env/common/props/markers/M_Blank_prop.bp' ),
                     ['orientation'] = VECTOR3( 0, 0, 0 ),
-                    ['position'] = VECTOR3( 128.5, 34.83025, 255.5 ),
+                    ['position'] = VECTOR3( 155.5, 32.00195, 228.5 ),
                 },
                 ['Reveal_04'] = {
                     ['color'] = STRING( 'ff800080' ),
@@ -419,16 +423,15 @@ Scenario = {
                     ['orientation'] = VECTOR3( 0, 0, 0 ),
                     ['position'] = VECTOR3( 128.5, 41.89318, 352.5 ),
                 },
-                ['Mass 05'] = {
-                    ['size'] = FLOAT( 1.000000 ),
-                    ['resource'] = BOOLEAN( true ),
-                    ['amount'] = FLOAT( 100.000000 ),
-                    ['color'] = STRING( 'ff808080' ),
-                    ['editorIcon'] = STRING( '' ),
-                    ['type'] = STRING( 'Mass' ),
+                ['LandPN33'] = {
+                    ['color'] = STRING( 'ff00ff00' ),
+                    ['hint'] = BOOLEAN( true ),
+                    ['graph'] = STRING( 'DefaultLand' ),
+                    ['adjacentTo'] = STRING( '' ),
+                    ['type'] = STRING( 'Land Path Node' ),
                     ['prop'] = STRING( '/env/common/props/markers/M_Blank_prop.bp' ),
                     ['orientation'] = VECTOR3( 0, 0, 0 ),
-                    ['position'] = VECTOR3( 263.5, 38.00232, 355.5 ),
+                    ['position'] = VECTOR3( 271.5, 38.01013, 319.5 ),
                 },
                 ['Player1'] = {
                     ['color'] = STRING( 'ff800080' ),
@@ -611,7 +614,7 @@ Scenario = {
                     ['type'] = STRING( 'Rally Point' ),
                     ['prop'] = STRING( '/env/common/props/markers/M_Blank_prop.bp' ),
                     ['orientation'] = VECTOR3( 0, 0, 0 ),
-                    ['position'] = VECTOR3( 260.5, 34.00208, 183.5 ),
+                    ['position'] = VECTOR3( 268.5, 34.00208, 199.5 ),
                 },
                 ['Reveal_02'] = {
                     ['color'] = STRING( 'ff800080' ),
@@ -638,15 +641,17 @@ Scenario = {
                     ['type'] = STRING( 'Amphibious Path Node' ),
                     ['prop'] = STRING( '/env/common/props/markers/M_Blank_prop.bp' ),
                     ['orientation'] = VECTOR3( 0, 0, 0 ),
-                    ['position'] = VECTOR3( 231.5, 31.99414, 234.5 ),
+                    ['position'] = VECTOR3( 231.5, 31.9707, 234.5 ),
                 },
-                ['AREA3_SPAWNER_EAST'] = {
-                    ['color'] = STRING( 'ff800000' ),
+                ['LandPN44'] = {
+                    ['color'] = STRING( 'ff00ff00' ),
                     ['hint'] = BOOLEAN( true ),
-                    ['type'] = STRING( 'Combat Zone' ),
+                    ['graph'] = STRING( 'DefaultLand' ),
+                    ['adjacentTo'] = STRING( '' ),
+                    ['type'] = STRING( 'Land Path Node' ),
                     ['prop'] = STRING( '/env/common/props/markers/M_Blank_prop.bp' ),
                     ['orientation'] = VECTOR3( 0, 0, 0 ),
-                    ['position'] = VECTOR3( 352.5, 33.14655, 250.5 ),
+                    ['position'] = VECTOR3( 383.5, 36.15845, 255.5 ),
                 },
                 ['LandPN31'] = {
                     ['color'] = STRING( 'ff00ff00' ),
@@ -687,7 +692,7 @@ Scenario = {
                     ['orientation'] = VECTOR3( 0, 0, 0 ),
                     ['position'] = VECTOR3( 352.5, 34.85369, 447.5 ),
                 },
-                ['LandPN44'] = {
+                ['LandPN57'] = {
                     ['color'] = STRING( 'ff00ff00' ),
                     ['hint'] = BOOLEAN( true ),
                     ['graph'] = STRING( 'DefaultLand' ),
@@ -695,7 +700,7 @@ Scenario = {
                     ['type'] = STRING( 'Land Path Node' ),
                     ['prop'] = STRING( '/env/common/props/markers/M_Blank_prop.bp' ),
                     ['orientation'] = VECTOR3( 0, 0, 0 ),
-                    ['position'] = VECTOR3( 383.5, 36.15845, 255.5 ),
+                    ['position'] = VECTOR3( 191.5, 35.49044, 191.5 ),
                 },
                 ['Reveal_01'] = {
                     ['color'] = STRING( 'ff800080' ),
@@ -782,15 +787,13 @@ Scenario = {
                     ['orientation'] = VECTOR3( 0, 0, 0 ),
                     ['position'] = VECTOR3( 175.5, 39.90478, 399.5 ),
                 },
-                ['LandPN57'] = {
-                    ['color'] = STRING( 'ff00ff00' ),
+                ['AREA3_SPAWNER_EAST'] = {
+                    ['color'] = STRING( 'ff800000' ),
                     ['hint'] = BOOLEAN( true ),
-                    ['graph'] = STRING( 'DefaultLand' ),
-                    ['adjacentTo'] = STRING( '' ),
-                    ['type'] = STRING( 'Land Path Node' ),
+                    ['type'] = STRING( 'Combat Zone' ),
                     ['prop'] = STRING( '/env/common/props/markers/M_Blank_prop.bp' ),
                     ['orientation'] = VECTOR3( 0, 0, 0 ),
-                    ['position'] = VECTOR3( 191.5, 35.49044, 191.5 ),
+                    ['position'] = VECTOR3( 348.5, 32.00195, 240.5 ),
                 },
                 ['Hydrocarbon 00'] = {
                     ['size'] = FLOAT( 3.000000 ),
@@ -828,7 +831,7 @@ Scenario = {
                     ['type'] = STRING( 'Rally Point' ),
                     ['prop'] = STRING( '/env/common/props/markers/M_Blank_prop.bp' ),
                     ['orientation'] = VECTOR3( 0, 0, 0 ),
-                    ['position'] = VECTOR3( 223.5, 34.00208, 165.5 ),
+                    ['position'] = VECTOR3( 251.5, 34.00208, 199.5 ),
                 },
                 ['LandPN50'] = {
                     ['color'] = STRING( 'ff00ff00' ),
@@ -924,7 +927,7 @@ Scenario = {
                     ['type'] = STRING( 'Combat Zone' ),
                     ['prop'] = STRING( '/env/common/props/markers/M_Blank_prop.bp' ),
                     ['orientation'] = VECTOR3( 0, 0, 0 ),
-                    ['position'] = VECTOR3( 255.5, 33.26375, 250.5 ),
+                    ['position'] = VECTOR3( 258.5, 32.00195, 240.5 ),
                 },
                 ['LandPN36'] = {
                     ['color'] = STRING( 'ff00ff00' ),
@@ -961,7 +964,7 @@ Scenario = {
                     ['color'] = STRING( 'ff808000' ),
                     ['type'] = STRING( 'Camera Info' ),
                     ['prop'] = STRING( '/env/common/props/markers/M_Blank_prop.bp' ),
-                    ['zoom'] = FLOAT( 36.159600 ),
+                    ['zoom'] = FLOAT( 36.000000 ),
                     ['canSetCamera'] = BOOLEAN( true ),
                     ['canSyncCamera'] = BOOLEAN( true ),
                     ['orientation'] = VECTOR3( -1.594727, 0.762422, 0 ),
@@ -1036,16 +1039,6 @@ Scenario = {
                     ['orientation'] = VECTOR3( 0, 0, 0 ),
                     ['position'] = VECTOR3( 128.5, 37.77574, 479.5 ),
                 },
-                ['LandPN20'] = {
-                    ['color'] = STRING( 'ff00ff00' ),
-                    ['hint'] = BOOLEAN( true ),
-                    ['graph'] = STRING( 'DefaultLand' ),
-                    ['adjacentTo'] = STRING( '' ),
-                    ['type'] = STRING( 'Land Path Node' ),
-                    ['prop'] = STRING( '/env/common/props/markers/M_Blank_prop.bp' ),
-                    ['orientation'] = VECTOR3( 0, 0, 0 ),
-                    ['position'] = VECTOR3( 383.5, 40.15869, 399.5 ),
-                },
                 ['LandPN29'] = {
                     ['color'] = STRING( 'ff00ff00' ),
                     ['hint'] = BOOLEAN( true ),
@@ -1055,6 +1048,13 @@ Scenario = {
                     ['prop'] = STRING( '/env/common/props/markers/M_Blank_prop.bp' ),
                     ['orientation'] = VECTOR3( 0, 0, 0 ),
                     ['position'] = VECTOR3( 303.5, 41.85021, 399.5 ),
+                },
+                ['Reveal_03'] = {
+                    ['color'] = STRING( 'ff800080' ),
+                    ['type'] = STRING( 'Blank Marker' ),
+                    ['prop'] = STRING( '/env/common/props/markers/M_Blank_prop.bp' ),
+                    ['orientation'] = VECTOR3( 0, 0, 0 ),
+                    ['position'] = VECTOR3( 343.5, 38.00232, 299.5 ),
                 },
                 ['AREA1_SPAWN_WEST_2'] = {
                     ['color'] = STRING( 'ff800000' ),
@@ -1070,7 +1070,7 @@ Scenario = {
                     ['type'] = STRING( 'Combat Zone' ),
                     ['prop'] = STRING( '/env/common/props/markers/M_Blank_prop.bp' ),
                     ['orientation'] = VECTOR3( 0, 0, 0 ),
-                    ['position'] = VECTOR3( 199.5, 33.90441, 250.5 ),
+                    ['position'] = VECTOR3( 194.5, 32.00195, 240.5 ),
                 },
                 ['Cybran_Outpost_Rally1'] = {
                     ['color'] = STRING( 'FF808000' ),
@@ -4356,18 +4356,18 @@ Scenario = {
                                                 Position = { 173.5, 34.00208, 182.5 },
                                                 Orientation = { 0, 0, 0 },
                                             },
-                                            ['UNIT_476'] = {
-                                                type = 'urb1105',
-                                                orders = '',
-                                                platoon = '',
-                                                Position = { 157.5, 34.00208, 182.5 },
-                                                Orientation = { 0, 0, 0 },
-                                            },
                                             ['UNIT_494'] = {
                                                 type = 'urb1101',
                                                 orders = '',
                                                 platoon = '',
                                                 Position = { 153.5, 34.00208, 184.5 },
+                                                Orientation = { 0, 0, 0 },
+                                            },
+                                            ['UNIT_486'] = {
+                                                type = 'urb1101',
+                                                orders = '',
+                                                platoon = '',
+                                                Position = { 169.5, 34.00208, 184.5 },
                                                 Orientation = { 0, 0, 0 },
                                             },
                                             ['UNIT_484'] = {
@@ -4405,11 +4405,11 @@ Scenario = {
                                                 Position = { 159.5, 34.00208, 180.5 },
                                                 Orientation = { 0, 0, 0 },
                                             },
-                                            ['UNIT_486'] = {
-                                                type = 'urb1101',
+                                            ['UNIT_476'] = {
+                                                type = 'urb1105',
                                                 orders = '',
                                                 platoon = '',
-                                                Position = { 169.5, 34.00208, 184.5 },
+                                                Position = { 157.5, 34.00208, 182.5 },
                                                 Orientation = { 0, 0, 0 },
                                             },
                                             ['UNIT_478'] = {
@@ -4738,13 +4738,6 @@ Scenario = {
                                                 Position = { 151.5, 34.00208, 182.5 },
                                                 Orientation = { 0, 0, 0 },
                                             },
-                                            ['UNIT_544'] = {
-                                                type = 'urb5101',
-                                                orders = '',
-                                                platoon = '',
-                                                Position = { 151.5, 34.00208, 183.5 },
-                                                Orientation = { 0, 0, 0 },
-                                            },
                                             ['UNIT_547'] = {
                                                 type = 'urb5101',
                                                 orders = '',
@@ -4752,25 +4745,25 @@ Scenario = {
                                                 Position = { 177.5, 34.00208, 181.5 },
                                                 Orientation = { 0, 0, 0 },
                                             },
-                                            ['UNIT_546'] = {
+                                            ['UNIT_544'] = {
                                                 type = 'urb5101',
                                                 orders = '',
                                                 platoon = '',
-                                                Position = { 150.5, 34.00208, 184.5 },
+                                                Position = { 151.5, 34.00208, 183.5 },
                                                 Orientation = { 0, 0, 0 },
                                             },
-                                            ['UNIT_542'] = {
-                                                type = 'urb5101',
+                                            ['UNIT_552'] = {
+                                                type = 'urb2104',
                                                 orders = '',
                                                 platoon = '',
-                                                Position = { 151.5, 34.00208, 181.5 },
+                                                Position = { 157.5, 34.00598, 171.5 },
                                                 Orientation = { 0, 0, 0 },
                                             },
-                                            ['UNIT_549'] = {
+                                            ['UNIT_545'] = {
                                                 type = 'urb5101',
                                                 orders = '',
                                                 platoon = '',
-                                                Position = { 177.5, 34.00208, 183.5 },
+                                                Position = { 150.5, 34.00208, 180.5 },
                                                 Orientation = { 0, 0, 0 },
                                             },
                                             ['UNIT_553'] = {
@@ -4787,11 +4780,11 @@ Scenario = {
                                                 Position = { 178.5, 34.00208, 182.5 },
                                                 Orientation = { 0, 0, 0 },
                                             },
-                                            ['UNIT_545'] = {
+                                            ['UNIT_546'] = {
                                                 type = 'urb5101',
                                                 orders = '',
                                                 platoon = '',
-                                                Position = { 150.5, 34.00208, 180.5 },
+                                                Position = { 150.5, 34.00208, 184.5 },
                                                 Orientation = { 0, 0, 0 },
                                             },
                                             ['UNIT_555'] = {
@@ -4799,6 +4792,13 @@ Scenario = {
                                                 orders = '',
                                                 platoon = '',
                                                 Position = { 150.5, 34.00208, 182.5 },
+                                                Orientation = { 0, 0, 0 },
+                                            },
+                                            ['UNIT_542'] = {
+                                                type = 'urb5101',
+                                                orders = '',
+                                                platoon = '',
+                                                Position = { 151.5, 34.00208, 181.5 },
                                                 Orientation = { 0, 0, 0 },
                                             },
                                             ['UNIT_551'] = {
@@ -4815,11 +4815,11 @@ Scenario = {
                                                 Position = { 178.5, 34.00208, 180.5 },
                                                 Orientation = { 0, 0, 0 },
                                             },
-                                            ['UNIT_552'] = {
-                                                type = 'urb2104',
+                                            ['UNIT_549'] = {
+                                                type = 'urb5101',
                                                 orders = '',
                                                 platoon = '',
-                                                Position = { 157.5, 34.00598, 171.5 },
+                                                Position = { 177.5, 34.00208, 183.5 },
                                                 Orientation = { 0, 0, 0 },
                                             },
                                         },
@@ -5308,12 +5308,12 @@ Scenario = {
                                 Position = { 196.5, 38.00232, 281.5 },
                                 Orientation = { 0, -3.141593, 0 },
                             },
-                            ['UNIT_676'] = {
-                                type = 'url0107',
+                            ['UNIT_252'] = {
+                                type = 'ueb5101',
                                 orders = '',
                                 platoon = '',
-                                Position = { 307.6322, 34.97459, 441.3083 },
-                                Orientation = { 0, -4.860742, 0 },
+                                Position = { 197.5, 38.00232, 280.5 },
+                                Orientation = { 0, 0, 0 },
                             },
                             ['UNIT_289'] = {
                                 type = 'uel0201',
@@ -5329,12 +5329,12 @@ Scenario = {
                                 Position = { 193.4755, 38.00232, 285.8968 },
                                 Orientation = { 0, -2.039003, 0 },
                             },
-                            ['UNIT_205'] = {
-                                type = 'ueb3101',
+                            ['UNIT_676'] = {
+                                type = 'url0107',
                                 orders = '',
                                 platoon = '',
-                                Position = { 210.5, 38.00232, 295.5 },
-                                Orientation = { 0, 0, 0 },
+                                Position = { 307.6322, 34.97459, 441.3083 },
+                                Orientation = { 0, -4.860742, 0 },
                             },
                             ['UNIT_254'] = {
                                 type = 'ueb5101',
@@ -5343,11 +5343,11 @@ Scenario = {
                                 Position = { 196.5, 38.00232, 282.5 },
                                 Orientation = { 0, 0, 0 },
                             },
-                            ['UNIT_253'] = {
-                                type = 'ueb5101',
+                            ['UNIT_213'] = {
+                                type = 'ueb1101',
                                 orders = '',
                                 platoon = '',
-                                Position = { 197.5, 38.00232, 282.5 },
+                                Position = { 194.5, 38.00232, 291.5 },
                                 Orientation = { 0, 0, 0 },
                             },
                             ['UNIT_211'] = {
@@ -5392,11 +5392,11 @@ Scenario = {
                                 Position = { 205.5, 38.00232, 280.5 },
                                 Orientation = { 0, 0, 0 },
                             },
-                            ['UNIT_213'] = {
-                                type = 'ueb1101',
+                            ['UNIT_259'] = {
+                                type = 'ueb5101',
                                 orders = '',
                                 platoon = '',
-                                Position = { 194.5, 38.00232, 291.5 },
+                                Position = { 189.5, 38.00232, 282.5 },
                                 Orientation = { 0, 0, 0 },
                             },
                             ['UNIT_207'] = {
@@ -5427,11 +5427,11 @@ Scenario = {
                                 Position = { 213.5, 38.10389, 282.5 },
                                 Orientation = { 0, 0, 0 },
                             },
-                            ['UNIT_259'] = {
+                            ['UNIT_253'] = {
                                 type = 'ueb5101',
                                 orders = '',
                                 platoon = '',
-                                Position = { 189.5, 38.00232, 282.5 },
+                                Position = { 197.5, 38.00232, 282.5 },
                                 Orientation = { 0, 0, 0 },
                             },
                             ['UNIT_276'] = {
@@ -5532,11 +5532,11 @@ Scenario = {
                                 Position = { 194.5, 38.00232, 282.5 },
                                 Orientation = { 0, 0, 0 },
                             },
-                            ['UNIT_252'] = {
-                                type = 'ueb5101',
+                            ['UNIT_205'] = {
+                                type = 'ueb3101',
                                 orders = '',
                                 platoon = '',
-                                Position = { 197.5, 38.00232, 280.5 },
+                                Position = { 210.5, 38.00232, 295.5 },
                                 Orientation = { 0, 0, 0 },
                             },
                             ['UNIT_255'] = {

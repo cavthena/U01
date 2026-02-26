@@ -37,7 +37,7 @@ local UEFBank = 'U01_UEFAudio'
     Ob4b_Title = 'Hold for the Communication Uplink'
     Ob4b_Desc = 'Defend the Coms Station for 5 minutes.'
 
-    Ob5_Title = 'Destroy the Cybran Support Commander'
+    Ob5_Title = 'Destroy the Cybran Support Commander and Base'
     Ob5_Desc = 'A Cybran Sleeper Agent is operating a Support Commander in the area. Destroy it!'
     Ob5a_Title = 'Destroy the Cybran Base'
     Ob5a_Desc = 'Destroy the Cybran Base so they can no longer pose a threat.'
@@ -102,15 +102,17 @@ Main3_1_1 = {
     vid = HQvid10, bank = UEFBank, cue = 'Main3_1_1', faction = 'UEF'},
     --Main3_1_2
     {text = '[HQ]: The outpost must be destroyed before you can proceed with your mission, sir! EarthCom, out.', 
-    vid = HQvid5, bank = UEFBank, cue = 'Main3_1_2', duration = 3, faction = 'UEF'},
-    --Main3_1_3
-    {text = '[HQ]: Sir, we have uploaded the blueprints required for Tech 1 land operations to your ACU. Proceed with destroying the Cybran Outpost! Good Luck! EarthCom, out.', 
-    vid = HQvid10, bank = UEFBank, cue = 'Main3_1_3', faction = 'UEF'},
+    vid = HQvid5, bank = UEFBank, cue = 'Main3_1_2', faction = 'UEF'},
 }
 
 Main3_2 = {
+    {text = '[HQ]: Sir, we have uploaded the blueprints required for Tech 1 land operations to your ACU. Proceed with destroying the Cybran Outpost! Good Luck! EarthCom, out.', 
+    vid = HQvid10, bank = UEFBank, cue = 'Main3_2', faction = 'UEF'},
+}
+
+Main3_3 = {
     {text = '[HQ]: Confirming the destruction of the Cybran Outpost! Good job, sir! EarthCom, out.', 
-    vid = HQvid5, bank = UEFBank, cue = 'Main3_2', faction = 'UEF'},
+    vid = HQvid5, bank = UEFBank, cue = 'Main3_3', faction = 'UEF'},
 }
 
 Main4_1_1 = {

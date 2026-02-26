@@ -66,57 +66,57 @@ function Ob1_Med()
     LOG('Ob1_Med: Mission Number: '.. ScenarioInfo.MissionNumber)
     LOG('Ob1_Med: Begin Objective 1.')
 
-    ScenarioFramework.RemoveRestrictionForAllHumans(categories.ueb1103 + categories.ueb1101 + categories.ueb0101) --Allow T1 Mass Extractor, PGen and Land Factory
-
     ExtraFunc.SpawnPlayerCommanders()
-    ScenarioFramework.CreateUnitDestroyedTrigger(function()
+    ScenarioFramework.CreateUnitDamagedTrigger(function()
         LOG('Operation Med: Player1 Commander destroyed. Mission failed!')
         ExtraFunc.CommanderDestroyed(ScenarioInfo.Player1CDR, NoComs)
-    end, ScenarioInfo.Player1CDR)
-
-    local function Ob2Handoff()
-        ScenarioFramework.PlayUnlockDialogue()
-        ScenarioFramework.RemoveRestrictionForAllHumans(categories.ueb2101 + categories.ueb5101) --Allow T1 PD, Walls
-
-        Ob2_Med()
-    end
-
-    local function Ob1Continue()
-        Tasks.Objective_1()
-        ScenarioInfo.Ob1Group = Objectives.CreateGroup('Ob1Group_Complete', function()
-
-            if not NoComs then 
-                ScenarioFramework.Dialogue(OpStrings.Main1_2, nil, true, nil)
-                Ob2Handoff()
-            else
-                Ob2Handoff()
-            end
-        end)
-        ScenarioInfo.Ob1Group:AddObjective(ScenarioInfo.Ob1)
-        ScenarioInfo.Ob1Group:AddObjective(ScenarioInfo.Ob1a)
-        ScenarioInfo.Ob1Group:AddObjective(ScenarioInfo.Ob1b)
-
-        Triggers.CreateArmyStatTrigger(
-            function()
-                if not NoComs then ScenarioFramework.Dialogue(OpStrings.Extra1_1, nil, false, nil) end
-            end,
-            ArmyBrains[ScenarioInfo.Player1],
-            'Player1LowMass',
-            {
-                {
-                    StatType = 'Economy_Stored_Mass',
-                    CompareType = 'LessThanOrEqual',
-                    Value = 300,
-                },
-            }
-        )
-    end
+    end, ScenarioInfo.Player1CDR, 0.99)
 
     if not NoComs then 
         ScenarioFramework.CreateTimerTrigger(ScenarioFramework.Dialogue(OpStrings.Main1_1, Ob1Continue, true, nil), 3)
     else
         Ob1Continue()
     end
+end
+
+function Ob1Continue()
+    ScenarioFramework.RemoveRestrictionForAllHumans(categories.ueb1103 + categories.ueb1101 + categories.ueb0101) --Allow T1 Mass Extractor, PGen and Land Factory
+    ScenarioFramework.PlayUnlockDialogue()
+
+    Tasks.Objective_1()
+    ScenarioInfo.Ob1Group = Objectives.CreateGroup('Ob1Group_Complete', function()
+
+        if not NoComs then 
+            ScenarioFramework.Dialogue(OpStrings.Main1_2, Ob2Handoff, true, nil)
+        else
+            Ob2Handoff()
+        end
+    end)
+    ScenarioInfo.Ob1Group:AddObjective(ScenarioInfo.Ob1)
+    ScenarioInfo.Ob1Group:AddObjective(ScenarioInfo.Ob1a)
+    ScenarioInfo.Ob1Group:AddObjective(ScenarioInfo.Ob1b)
+
+    Triggers.CreateArmyStatTrigger(
+        function()
+            if not NoComs then ScenarioFramework.Dialogue(OpStrings.Extra1_1, nil, false, nil) end
+        end,
+        ArmyBrains[ScenarioInfo.Player1],
+        'Player1LowMass',
+        {
+            {
+                StatType = 'Economy_Stored_Mass',
+                CompareType = 'LessThanOrEqual',
+                Value = 300,
+            },
+        }
+    )
+end
+
+function Ob2Handoff()
+    ScenarioFramework.RemoveRestrictionForAllHumans(categories.ueb2101 + categories.ueb5101) --Allow T1 PD, Walls
+    ScenarioFramework.PlayUnlockDialogue()
+
+    Ob2_Med()
 end
 
 --[[
@@ -128,9 +128,16 @@ function Ob2_Med()
     LOG('Ob2_Med: Mission Number: '.. ScenarioInfo.MissionNumber)
     LOG('Ob2_Med: Begin Objective 2.')
 
-    ScenarioFramework.RemoveRestrictionForAllHumans(categories.uel0106) --Allow T1 LAB
+    if not NoComs then 
+        ScenarioFramework.Dialogue(OpStrings.Main2_1_1, Ob2Continue, true, nil) 
+    else
+        Ob2Continue()
+    end
+end
 
-    if not NoComs then ScenarioFramework.Dialogue(OpStrings.Main2_1_1, nil, true, nil) end
+function Ob2Continue()
+    ScenarioFramework.RemoveRestrictionForAllHumans(categories.uel0106) --Allow T1 LAB
+    ScenarioFramework.PlayUnlockDialogue()
 
     Tasks.Objective_2() --Timed Objective
     ScenarioInfo.Ob2:AddResultCallback(function()
@@ -147,18 +154,22 @@ function Ob2a_Med()
 
     if not NoComs then ScenarioFramework.Dialogue(OpStrings.Main2a_1, nil, true, nil) end
 
-    local function Ob2bPrep()
-        if not NoComs then ScenarioFramework.Dialogue(OpStrings.Main2a_2, nil, true, nil) end
-
-        ScenarioInfo.Ob2a:ManualResult(true)
-        Ob2b_Med()
-    end
-
     Tasks.Objective_2a()
+
     CybranMed.AREA1_CybranScoutAttack()
     ScenarioInfo.CybranScoutAttack:AddCallback(function()
         Ob2bPrep()
     end, 'OnSpawnerComplete')
+end
+
+function Ob2bPrep()
+    ScenarioInfo.Ob2a:ManualResult(true)
+    
+    if not NoComs then 
+        ScenarioFramework.Dialogue(OpStrings.Main2a_2, Ob2b_Med, true, nil) 
+    else
+        Ob2b_Med()
+    end
 end
 
 --[[
@@ -168,16 +179,14 @@ Operation 2b: Repel Cybran attack.
 function Ob2b_Med()
     LOG('Ob2b_Med: Begin Objective 2b.')
 
-    ScenarioFramework.CreateTimerTrigger(function()
-        if not NoComs then ScenarioFramework.Dialogue(OpStrings.Info2b_1, nil, false, nil) end
+    if not NoComs then ScenarioFramework.Dialogue(OpStrings.Info2b_1, nil, false, nil) end
 
+    ScenarioFramework.CreateTimerTrigger(function()
         local platoon = CybranMed.AREA1_CybranAttackPlatoon()
         Tasks.Objective_2b(platoon)
         ScenarioInfo.Ob2b:AddResultCallback(function()
             if not NoComs then
-                ScenarioFramework.Dialogue(OpStrings.Main2b_1, function()
-                    Ob3_Med()
-                end, true, nil)
+                ScenarioFramework.Dialogue(OpStrings.Main2b_1, Ob3_Med, true, nil)
             else
                 Ob3_Med()
             end
@@ -196,9 +205,6 @@ function Ob3_Med()
 
     CybranMed.Cybran_Outpost_AI()
 
-    ScenarioFramework.RemoveRestrictionForAllHumans((categories.UEF * categories.TECH1 * (categories.LAND + categories.STRUCTURE)) - (categories.FACTORY * (categories.AIR + categories.NAVAL) + categories.SONAR + categories.AIRSTAGINGPLATFORM + categories.ueb2109)) --Allow for all T1 Land units and structures.
-    if not NoComs then ScenarioFramework.Dialogue(OpStrings.Main3_1_1, nil, true, nil) end
-
     Triggers.CreateArmyIntelTrigger(function()
         if not NoComs then ScenarioFramework.Dialogue(OpStrings.Extra3_1, nil, false, nil) end
     end, ArmyBrains[ScenarioInfo.Player1], 'LOSNow', false, true, categories.urb2101, true, ArmyBrains[ScenarioInfo.Cybran])
@@ -207,6 +213,14 @@ function Ob3_Med()
         if not NoComs then ScenarioFramework.Dialogue(OpStrings.Extra3_2, nil, false, nil) end
     end, ArmyBrains[ScenarioInfo.Player1], 'LOSNow', false, true, categories.urb4203, true, ArmyBrains[ScenarioInfo.Cybran])
 
+    if not NoComs then 
+        ScenarioFramework.Dialogue(OpStrings.Main3_1_1, Ob3Continue, true, nil) 
+    else
+        Ob3Continue()
+    end
+end
+
+function Ob3Continue()
     ScenarioFramework.SetPlayableArea('SINGLE_2', true)
 
     Tasks.Objective_3()
@@ -216,12 +230,25 @@ function Ob3_Med()
         BuildMgr.Stop(ScenarioInfo.COBArtyWave)
 
         if not NoComs then
-            ScenarioFramework.Dialogue(OpStrings.Main3_2, Ob4_Med, true, nil)
+            ScenarioFramework.Dialogue(OpStrings.Main3_3, Ob4_Med, true, nil)
         else
             Ob4_Med()
         end
     end)
+
+    ScenarioFramework.CreateTimerTrigger(function()
+        if not NoComs then
+            ScenarioFramework.Dialogue(OpStrings.Main3_2, function()
+                ScenarioFramework.RemoveRestrictionForAllHumans((categories.UEF * categories.TECH1 * (categories.LAND + categories.STRUCTURE)) - (categories.FACTORY * (categories.AIR + categories.NAVAL) + categories.SONAR + categories.AIRSTAGINGPLATFORM + categories.ueb2109)) --Allow for all T1 Land units and structures.
+                ScenarioFramework.PlayUnlockDialogue()
+            end, true, nil)
+        else
+            ScenarioFramework.RemoveRestrictionForAllHumans((categories.UEF * categories.TECH1 * (categories.LAND + categories.STRUCTURE)) - (categories.FACTORY * (categories.AIR + categories.NAVAL) + categories.SONAR + categories.AIRSTAGINGPLATFORM + categories.ueb2109)) --Allow for all T1 Land units and structures.
+            ScenarioFramework.PlayUnlockDialogue()
+        end
+    end, 5)
 end
+    
 
 --[[
 Operation 4: Secure the UEF Quantum Coms Station.
@@ -269,9 +296,17 @@ function Ob4_Med()
     ScenarioUtils.CreateArmyGroup('UEFOutpost', 'UEF_ComsBase_Def_D'.. Difficulty)
     ScenarioUtils.CreateArmyGroup('UEFOutpost', 'UEF_ComsBase_Main')
 
-    ScenarioFramework.SetPlayableArea('AREA_3', true)
+    if not NoComs then 
+        ScenarioFramework.Dialogue(OpStrings.Main4_1_1, function()
+            Ob4Continue(Ob4_CaptureTarget)
+        end, true, nil) 
+    else
+        Ob4Continue(Ob4_CaptureTarget)
+    end
+end
 
-    if not NoComs then ScenarioFramework.Dialogue(OpStrings.Main4_1_1, nil, true, nil) end
+function Ob4Continue(Ob4_CaptureTarget)
+    ScenarioFramework.SetPlayableArea('AREA_3', true)
 
     Tasks.Objective_4(Ob4_CaptureTarget)
     ScenarioInfo.Ob4:AddResultCallback(function(success, payload)
@@ -408,33 +443,42 @@ function Ob5_Med()
         ScenarioInfo.CMBEngi:AssignEngineerUnit(comUnit)
     end
 
-    local function Ob5Continue()
-        ScenarioFramework.SetPlayableArea('AREA_4', true)
-
-        Tasks.Objective_5()
-        ScenarioInfo.Ob5:AddResultCallback(function()
-            if not NoComs then
-                ScenarioFramework.Dialogue(OpStrings.Main5_2, ExtraFunc.OperationComplete, true, nil)
-            else
-                ExtraFunc.OperationComplete()
-            end
-        end)
-
-        ScenarioFramework.CreateTimerTrigger(function()
-            if not NoComs then ScenarioFramework.Dialogue(OpStrings.Side5_3, nil, false, nil) end
-
-            local areaName = ExtraFunc.AreaFromMarkers('Ob5Sec2Area', 'LandPN46', 'LandPN44')
-            local CybranMex = ScenarioFramework.GetCatUnitsInArea(categories.CYBRAN * categories.STRUCTURE * categories.MASSEXTRACTION * categories.TECH1, areaName, ArmyBrains[ScenarioInfo.Cybran])
-            Tasks.Objective_5Sec2(CybranMex)
-            ScenarioInfo.Ob5Sec2:AddResultCallback(function()
-                if not NoComs then ScenarioFramework.Dialogue(OpStrings.Side5_2, nil, false, nil) end
-            end)
-        end, 15)
-    end
-
     if not NoComs then
         ScenarioFramework.Dialogue(OpStrings.Main5_1_1, Ob5Continue, true, nil)
     else
         Ob5Continue()
     end
+end
+
+function Ob5Continue()
+    ScenarioFramework.SetPlayableArea('AREA_4', true)
+
+    Tasks.Objective_5()
+    ScenarioInfo.Ob5:AddResultCallback(function()
+        if not NoComs then
+            ScenarioFramework.Dialogue(OpStrings.Main5_2, ExtraFunc.OperationComplete, true, nil)
+        else
+            ExtraFunc.OperationComplete()
+        end
+    end)
+
+    ScenarioFramework.CreateTimerTrigger(function()
+        if not NoComs then ScenarioFramework.Dialogue(OpStrings.Side5_3, nil, false, nil) end
+
+    ScenarioFramework.CreateTimerTrigger(function()
+        local function DestroyMex()
+            local areaName = ExtraFunc.AreaFromMarkers('Ob5Sec2Area', 'LandPN46', 'LandPN44')
+            local CybranMex = ScenarioFramework.GetCatUnitsInArea(categories.CYBRAN * categories.STRUCTURE * categories.MASSEXTRACTION * categories.TECH1, areaName, ArmyBrains[ScenarioInfo.Cybran])
+            Tasks.Objective_5Sec2(CybranMex)
+            ScenarioInfo.Ob5Sec2:AddResultCallback(function()
+                if not NoComs then ScenarioFramework.Dialogue(OpStrings.Side5_4, nil, false, nil) end
+            end)
+        end
+
+        if not NoComs then 
+            ScenarioFramework.Dialogue(OpStrings.Side5_3, DestroyMex, false, nil)
+        else
+            DestroyMex()
+        end
+    end, 15)
 end

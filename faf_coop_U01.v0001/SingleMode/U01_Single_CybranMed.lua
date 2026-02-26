@@ -50,7 +50,6 @@ function Cybran_Outpost_AI()
         attackData = {
             Formation = 'AttackFormation',
             TargetType = 'cluster',
-            RandomizeRoute = false,
         },
         builderTag = 'COBWave',
         mode = 1,
@@ -75,7 +74,6 @@ function Cybran_Outpost_AI()
         attackData = {
             Formation = 'AttackFormation',
             TargetType = 'cluster',
-            RandomizeRoute = false,
         },
         builderTag = 'COBArtyWave',
         mode = 1,
@@ -125,7 +123,6 @@ function Cybran_MainBase_AI()
             Type = 'cluster',
             TargetArmy = {ScenarioInfo.Player1},
             Formation = 'AttackFormation',
-            RandomizeRoute = false,
         },
         builderTag = 'CMBWave',
         mode = 1,
@@ -153,7 +150,6 @@ function Cybran_MainBase_AI()
             TargetArmy = {ScenarioInfo.Player1},
             Formation = 'AttackFormation',
             Bombard = true,
-            RandomizeRoute = false,
         },
         builderTag = 'CMBArty',
         mode = 2,
@@ -251,7 +247,6 @@ function Cybran_SupportAirBase_AI()
             TargetCategories = {categories.AIR - categories.STRUCTURE},
             Marker = 'Cybran_Airbase_Zone',
             Formation = 'AttackFormation',
-            RandomizeRoute = false,
         },
         builderTag = 'CSABInt',
         mode = 2,
@@ -279,7 +274,6 @@ function Cybran_SupportAirBase_AI()
             TargetArmy = {ScenarioInfo.Player1},
             Formation = 'AttackFormation',
             AvoidDef = true,
-            RandomizeRoute = false,
         },
         builderTag = 'CSABBomb',
         mode = 1,
@@ -298,7 +292,6 @@ function AREA1_CybranScoutAttack()
         attackData = {
             TargetType = 'closest',
             Formation = 'NoFormation',
-            RandomizeRoute = false,
         },
         waveCooldown = 60,
         mode = 4,
@@ -327,7 +320,6 @@ function AREA1_CybranAttackPlatoon()
     platoon:ForkAIThread(plaAtk.WaveAttack, {
         Formation = 'AttackFormation',
         TargetType = 'cluser',
-        RandomizeRoute = false,
     })
 
     return platoon
@@ -345,7 +337,6 @@ function AREA3_CybranWaveAttacks()
             Type = 'cluster',
             TargetArmy = {ScenarioInfo.Player1},
             Formation = 'AttackFormation',
-            RandomizeRoute = false,
         },
         waveCooldown = 50,
         mode = 1,
@@ -366,7 +357,6 @@ function AREA3_CybranWaveAttacks()
             Type = 'cluster',
             TargetArmy = {ScenarioInfo.Player1},
             Formation = 'AttackFormation',
-            RandomizeRoute = false,
         },
         waveCooldown = 65,
         mode = 1,
@@ -387,7 +377,6 @@ function AREA3_CybranRaidAttacks()
             Type = 'closest',
             TargetArmy = {ScenarioInfo.UEFOutpost},
             Formation = 'AttackFormation',
-            RandomizeRoute = false,
         },
         waveCooldown = 50,
         mode = 2,
@@ -410,7 +399,6 @@ function AREA3_HoldingAttack()
             Type = 'value',
             TargetArmy = {ScenarioInfo.Player1},
             Formation = 'AttackFormation',
-            RandomizeRoute = false,
         },
         waveCooldown = 60,
         mode = 1,
@@ -420,7 +408,7 @@ function AREA3_HoldingAttack()
 
     ScenarioInfo.AREA3_HoldingKill = SpawnMgr.Start{
         brain = ArmyBrains[ScenarioInfo.Cybran],
-        spawnMarker = {'AREA3_SPAWNER_WEST', 'AREA3_SPAWNER_CENTER', 'AREA3_SPAWNER_EAST'},
+        spawnMarker = {'AREA3_SPAWNER_EAST'},
         composition = {
             {'url0107', 6},
             {'url0103', 2},
@@ -430,7 +418,6 @@ function AREA3_HoldingAttack()
             Blueprints = {'uec9901'},
             Marker = 'AREA3_SPAWNER_CENTER',
             Formation = 'AttackFormation',
-            RandomizeRoute = false,
         },
         waveCooldown = 300,
         mode = 4,

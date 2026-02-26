@@ -118,15 +118,14 @@ function Cybran_MainBase_AI()
         wantFactories = 1,
         priority = 50,
         radius = 42,
-        rallyMarker = 'Cybran_MainBase_Rally1',
+        rallyMarker = 'Cybran_MainBase_Rally2',
         waveCooldown = 20,
         attackFn = plaAtk.HuntAttack,
         attackData = {
             TargetCategories = {categories.LAND - categories.STRUCTURE},
-            Marker = 'Cybran_MainBase_Rally1',
+            Marker = 'Cybran_MainBase_Rally2',
             TargetArmy = {ScenarioInfo.Player1},
             Formation = 'AttackFormation',
-            RandomizeRoute = false,
         },
         builderTag = 'CMBRush',
         mode = 1,
@@ -138,7 +137,6 @@ function Cybran_MainBase_AI()
         domain = 'LAND',
         composition = {
             {'url0107', 6},
-            {'url0106', 2},
             {'url0101', 1},
         },
         baseHandle = ScenarioInfo.CMBEngi,
@@ -146,7 +144,7 @@ function Cybran_MainBase_AI()
         priority = 150,
         radius = 42,
         rallyMarker = 'Cybran_MainBase_Rally1',
-        waveCooldown = 60,
+        waveCooldown = 45,
         attackFn = plaAtk.WaveAttack,
         attackData = {
             Type = 'cluster',
@@ -193,15 +191,14 @@ function Cybran_MainBase_AI()
         baseMarker = 'Cybran_MainBase_Zone',
         domain = 'LAND',
         composition = {
-            {'url0107', 2},
-            {'url0106', 4},
+            {'url0107', 4},
             {'url0104', 2},
         },
         baseHandle = ScenarioInfo.CMBEngi,
         wantFactories = 1,
         priority = 100,
         radius = 42,
-        rallyMarker = 'Cybran_MainBase_Rally1',
+        rallyMarker = 'APM_Amphibious_AutoPathNode_00',
         waveCooldown = 60,
         attackFn = plaAtk.AreaPatrol,
         attackData = {
@@ -278,7 +275,6 @@ function Cybran_SupportAirBase_AI()
             TargetCategories = {categories.AIR - categories.STRUCTURE},
             Marker = 'Cybran_Airbase_Zone',
             Formation = 'AttackFormation',
-            RandomizeRoute = false,
         },
         builderTag = 'CSABInt',
         mode = 2,
@@ -308,7 +304,6 @@ function Cybran_SupportAirBase_AI()
             TargetArmy = {ScenarioInfo.Player1},
             Formation = 'AttackFormation',
             AvoidDef = true,
-            RandomizeRoute = false,
         },
         builderTag = 'CSABBomb',
         mode = 1,
@@ -329,7 +324,6 @@ function AREA1_CybranScoutAttack()
         attackData = {
             TargetType = 'closest',
             Formation = 'NoFormation',
-            RandomizeRoute = false,
         },
         waveCooldown = 60,
         mode = 4,
@@ -358,7 +352,6 @@ function AREA1_CybranAttackPlatoon()
     platoon:ForkAIThread(plaAtk.WaveAttack, {
         Formation = 'AttackFormation',
         TargetType = 'cluser',
-        RandomizeRoute = false,
     })
 
     return platoon
@@ -381,7 +374,7 @@ function AREA3_CybranWaveAttacks(markers)
         waveCooldown = 70,
         mode = 1,
         spawnerTag = 'AREA3_Wave1',
-        spawnSpread = 4,
+        spawnSpread = 2,
         escalationPercent = 0.10,
         escalationFrequency = 2,
     }
@@ -402,7 +395,7 @@ function AREA3_CybranWaveAttacks(markers)
         waveCooldown = 85,
         mode = 1,
         spawnerTag = 'AREA3_WaveArty',
-        spawnSpread = 4,
+        spawnSpread = 2,
     }
 end
 
@@ -419,13 +412,12 @@ function AREA3_CybranRaidAttacks(markers)
             Type = 'closest',
             TargetArmy = {ScenarioInfo.UEFOutpost},
             Formation = 'AttackFormation',
-            RandomizeRoute = false,
         },
         waveCooldown = 100,
         mode = 2,
         mode2LossThreshold = 0.75,
         spawnerTag = 'AREA3_OutpostRaid',
-        spawnSpread = 4,
+        spawnSpread = 2,
         escalationPercent = 0.15,
         escalationFrequency = 3,
     }
@@ -444,12 +436,11 @@ function AREA3_HoldingAttack(markersWave, markersKill)
             Type = 'value',
             TargetArmy = {ScenarioInfo.Player1},
             Formation = 'AttackFormation',
-            RandomizeRoute = false,
         },
         waveCooldown = 60,
         mode = 1,
         spawnerTag = "AREA3_HoldingWave",
-        spawnSpread = 6,
+        spawnSpread = 2,
         escalationPercent = 0.25,
         escalationFrequency = 5,
     }
@@ -466,13 +457,12 @@ function AREA3_HoldingAttack(markersWave, markersKill)
             Blueprints = {'uec9901'},
             Marker = 'AREA3_SPAWNER_CENTER',
             Formation = 'AttackFormation',
-            RandomizeRoute = false,
         },
         waveCooldown = 300,
         mode = 4,
         mode4PlatoonCount = 12,
         spawnerTag = 'AREA3_HoldingKill',
-        spawnSpread = 6,
+        spawnSpread = 2,
         escalationPercent = 0.25,
         escalationFrequency = 3,
     }

@@ -8,7 +8,7 @@ ScenarioInfo = {
     type = 'campaign_coop',
     starts = true,
     size = {512, 512},
-    reclaim = {39217.54, 12255.36},
+    reclaim = {39204.27, 12110.71},
     map = '/maps/faf_coop_U01.v0001/faf_coop_U01.scmap',
     save = '/maps/faf_coop_U01.v0001/faf_coop_U01_save.lua',
     script = '/maps/faf_coop_U01.v0001/faf_coop_U01_script.lua',
@@ -23,6 +23,10 @@ ScenarioInfo = {
             },
             customprops = {
                 ['ExtraArmies'] = STRING( 'ARMY_17 NEUTRAL_CIVILIAN' ),
+            },
+            factions = {
+                {'uef'},
+                {'uef'}
             },
         },
     },
