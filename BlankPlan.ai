@@ -1,0 +1,12 @@
+AI = {}
+
+function AI.ExecutePlan(brain)
+    return true
+end
+
+function AI.HasBuilderList(brain)
+    return true
+end
+
+function AI.OnInitialize(brain)
+end
